@@ -87,8 +87,8 @@ const Sprites = {
   map: {},
   load: function () {
     const files = {
-      zhuhouzhao: 'assets/zhuhouzhao.png',
-      zhushou: 'assets/zhushou.png',
+      zhuhouzhao: 'Zhuhouzhao.png',
+      zhushou: 'Zhushou.png',
       zhangqin: 'assets/zhangqin.png',
       yin: 'assets/yin.png',
       cry: 'assets/zhangqin_cry.png'
@@ -763,7 +763,10 @@ function drawPlayer() {
     const n = SHEET_FRAMES[zhushou ? 'zhushou' : 'zhuhouzhao'];
     const fw = img.width / n;
     const f = player.onGround ? Math.floor(t * 10) % n : Math.max(0, n - 2);
-    ctx.drawImage(img, f * fw, 0, fw, img.height, x, y, PLAYER_W, PLAYER_H);
+    /* 等比缩放，避免 32×32 源帧被拉伸变形（仅改绘制，不动碰撞盒） */
+    const scale = Math.min(PLAYER_W / fw, PLAYER_H / img.height);
+    const dw = fw * scale, dh = img.height * scale;
+    ctx.drawImage(img, f * fw, 0, fw, img.height, x + (PLAYER_W - dw) / 2, y + (PLAYER_H - dh) / 2, dw, dh);
   } else {
     /* 占位像素小人：朱厚照=黄龙袍 / 朱寿=红甲金盔 */
     const skin = '#f0c8a0';
