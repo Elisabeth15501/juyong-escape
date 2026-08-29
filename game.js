@@ -82,14 +82,14 @@ const AudioSys = {
 };
 
 /* ---------- 精灵表加载（缺失自动回退代码占位绘制） ---------- */
-const SHEET_FRAMES = { zhuhouzhao: 4, zhushou: 4, zhangqin: 4, yin: 1, cry: 8 };
+const SHEET_FRAMES = { zhuhouzhao: 4, zhushou: 4, zhangqin: 1, yin: 1, cry: 8 };
 const Sprites = {
   map: {},
   load: function () {
     const files = {
       zhuhouzhao: 'Zhuhouzhao.png',
       zhushou: 'Zhushou.png',
-      zhangqin: 'assets/zhangqin.png',
+      zhangqin: 'Zhangqin.png',
       yin: 'assets/yin.png',
       cry: 'assets/zhangqin_cry.png'
     };
@@ -685,7 +685,10 @@ function drawZhangqin(x, y, t) {
     const n = SHEET_FRAMES.zhangqin;
     const fw = img.width / n;
     const f = Math.floor(t * 8) % n;
-    ctx.drawImage(img, f * fw, 0, fw, img.height, x, y, OBST_DEF.zhangqin.w, OBST_DEF.zhangqin.h);
+    const bw = OBST_DEF.zhangqin.w, bh = OBST_DEF.zhangqin.h;
+    const scale = Math.min(bw / fw, bh / img.height);
+    const dw = fw * scale, dh = img.height * scale;
+    ctx.drawImage(img, f * fw, 0, fw, img.height, x + (bw - dw) / 2, y + (bh - dh) / 2, dw, dh);
     return;
   }
   /* 占位：蓝袍御史，仗剑而立 */
