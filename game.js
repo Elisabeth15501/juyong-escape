@@ -1,6 +1,6 @@
 'use strict';
 /* ============================================================
- * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（MVP v0.8.0）
+ * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（MVP v0.9.0）
  * ------------------------------------------------------------
  * 双模式引擎：
  *   1) 关卡模式「出关记」：3 幕叙事（LEVELS 数据驱动，可扩至 8 幕）
@@ -15,7 +15,10 @@
  * ------------------------------------------------------------
  * 自定义美术（可选，丢进 ./assets/ 自动生效，缺失则代码占位绘制）：
  *   zhuhouzhao.png（朱厚照，4 帧横排）   zhushou.png（朱寿，4 帧）
- *   Shiwei.png（侍卫，1 帧）             yin.png（大将军印，1 帧）
+ *   Shiwei.png（侍卫，1 帧）
+ *   Zhangqin_standing.png（张钦，站立单帧；未被玩家碰撞前用）
+ *   Zhangqin.png（张钦，追击奔跑动画，N 帧横排；追玩家时用，帧数见 SHEET_FRAMES.zhangqin）
+ *   yin.png（大将军印，1 帧）
  *   zhangqin_cry.png（张钦痛哭，8 帧横排，终局演出用）
  * ============================================================ */
 
@@ -77,13 +80,14 @@ const AudioSys = {
     this.tone(1047, 0.22, 'square', 0.08, 0.3);
   },
   hit: function () { this.tone(220, 0.28, 'sawtooth', 0.09, 0, 60); },
+  alert: function () { this.tone(330, 0.09, 'square', 0.09, 0, 240); this.tone(330, 0.09, 'square', 0.09, 0.14, 240); },
   smash: function () { this.tone(90, 0.3, 'sawtooth', 0.12, 0, 40); this.tone(320, 0.12, 'square', 0.06, 0.02, 80); },
   clear: function () { this.tone(523, 0.12, 'square', 0.07); this.tone(659, 0.12, 'square', 0.07, 0.12); this.tone(784, 0.2, 'square', 0.07, 0.24); },
   cry: function () { this.tone(392, 0.5, 'triangle', 0.06, 0, 330); this.tone(311, 0.8, 'triangle', 0.06, 0.6, 250); }
 };
 
 /* ---------- 精灵表加载（缺失自动回退代码占位绘制） ---------- */
-const SHEET_FRAMES = { zhuhouzhao: 4, zhushou: 4, shiwei: 1, yin: 1, cry: 8 };
+const SHEET_FRAMES = { zhuhouzhao: 4, zhushou: 4, shiwei: 1, zhangqin: 4, zhangqin_standing: 1, yin: 1, cry: 8 };
 const Sprites = {
   map: {},
   load: function () {
@@ -91,6 +95,8 @@ const Sprites = {
       zhuhouzhao: 'Zhuhouzhao.png',
       zhushou: 'Zhushou.png',
       shiwei: 'Shiwei.png',
+      zhangqin: 'Zhangqin.png',
+      zhangqin_standing: 'Zhangqin_standing.png',
       yin: 'assets/yin.png',
       cry: 'assets/zhangqin_cry.png'
     };
@@ -128,7 +134,7 @@ const LEVELS = [
     after: '《明史 · 张钦传》：\n「钦乃负敕印，仗剑坐关门下曰：\n敢言开关者，斩！」\n皇帝悻悻而回——但没人相信，\n他会就此罢休。',
     scene: 'road',
     sky: ['#f6c06a', '#d97a4a'], far: '#6f5a6e', mid: '#8d6a5f', ground: '#4e3a2a',
-    speed: 290, interval: [1.25, 1.9], types: ['shiwei', 'suo', 'zouzhe'], length: 11000,
+    speed: 290, interval: [1.25, 1.9], types: ['shiwei', 'suo', 'zouzhe', 'zhangqin'], length: 11000,
     sealAt: [0.3, 0.7],
     hint: '跳过侍卫与「锁」· 别撞飞来的「奏折」！',
     gate: false
@@ -139,7 +145,7 @@ const LEVELS = [
     after: '',
     scene: 'pass',
     sky: ['#2d3a5e', '#7a5a72'], far: '#3a3652', mid: '#4d4360', ground: '#2f2a3a',
-    speed: 330, interval: [1.0, 1.6], types: ['shiwei', 'suo', 'zouzhe'], length: 12000,
+    speed: 330, interval: [1.0, 1.6], types: ['shiwei', 'suo', 'zouzhe', 'zhangqin'], length: 12000,
     sealAt: [0.8],
     hint: '疾驰！变身朱寿，撞开关门，出关！',
     gate: true
@@ -181,7 +187,8 @@ const MENU_BG = {
 const OBST_DEF = {
   shiwei: { w: 26, h: 44, fly: false },       // 守关侍卫（地面 · 跳过他）
   suo: { w: 18, h: 18, fly: false },          // 侍卫掷出的锁（地面 · 跳过）
-  zouzhe: { w: 24, h: 14, fly: true }         // 飞来的奏折（空中 · 千万别跳，y=G-74 动态）
+  zouzhe: { w: 24, h: 14, fly: true },        // 飞来的奏折（空中 · 千万别跳）
+  zhangqin: { w: 30, h: 48, fly: false }      // 追击型 BOSS：巡关御史张钦（巡逻→追击，不会跳跃）
 };
 
 /* ---------- 运行时状态 ---------- */
@@ -349,11 +356,16 @@ function spawnObstacle() {
   let types;
   if (mode === 'endless') {
     types = dist > 3000 ? ['shiwei', 'suo', 'zouzhe'] : ['shiwei', 'suo'];
+    if (dist > 120 * PX_PER_LI) types.push('zhangqin');   // 无限模式：过 120 里后张钦登场
   } else {
-    types = currentLevel().types;
+    types = currentLevel().types.slice();                 // 张钦写在 L2/L3 types 里（与锁同规则）
+  }
+  /* 张钦全场唯一：已在场则本次改为生成其他障碍 */
+  if (types.indexOf('zhangqin') >= 0 && obstacles.some(function (o) { return o.type === 'zhangqin'; })) {
+    types = types.filter(function (t) { return t !== 'zhangqin'; });
   }
   const type = types[Math.floor(Math.random() * types.length)];
-  obstacles.push({ type: type, x: VW + 50, t: 0, dead: false });
+  obstacles.push({ type: type, x: VW + 50, t: 0, dead: false, chasing: false, chaseT: 0, cool: 0 });
 }
 
 /* rel：相对地面线 G 的负偏移（旋转屏幕后自动跟随） */
@@ -433,7 +445,42 @@ function updatePlay(dt) {
   }
 
   const mv = speed * dt;
-  for (let i = 0; i < obstacles.length; i++) { obstacles[i].x -= mv; obstacles[i].t += dt; }
+  for (let i = 0; i < obstacles.length; i++) {
+    const o = obstacles[i];
+    o.x -= mv; o.t += dt;
+    if (o.type === 'zhangqin') {
+      if (o.chasing) {
+        o.chaseT += dt;
+        if (o.cool > 0) o.cool -= dt;
+        /* 追击：横向扑向玩家（不会跳跃，跳过他即可甩开） */
+        const dx = PLAYER_X - o.x;
+        o.x += Math.max(-240, Math.min(240, dx * 3)) * dt;
+      } else {
+        /* 巡逻：原地左右踱步 */
+        o.x += Math.sin(o.t * 1.6) * 42 * dt;
+      }
+    }
+  }
+  /* 追击中的张钦撞上其他障碍物 → 被撞晕退场（奏折飞得太高撞不到他） */
+  for (let i = 0; i < obstacles.length; i++) {
+    const a = obstacles[i];
+    if (a.type !== 'zhangqin' || !a.chasing || a.dead) continue;
+    const ad = OBST_DEF.zhangqin;
+    const abox = { x: a.x + 2, y: G - ad.h + 2, w: ad.w - 4, h: ad.h - 4 };
+    for (let j = 0; j < obstacles.length; j++) {
+      if (j === i) continue;
+      const b = obstacles[j], bd = OBST_DEF[b.type];
+      const boy = bd.fly ? G - FLY_OBST_OFFSET : G - bd.h;
+      if (rectsOverlap(abox, { x: b.x + 2, y: boy + 2, w: bd.w - 4, h: bd.h - 4 })) {
+        a.dead = true;
+        burst(a.x + ad.w / 2, G - ad.h / 2, 14, '#e0705a');
+        AudioSys.smash();
+        shakeT = 0.18;
+        hintText = '张钦撞晕了！'; hintT = 1.5;
+        break;
+      }
+    }
+  }
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     it.x -= mv;
@@ -467,6 +514,13 @@ function updatePlay(dt) {
         burst(o.x + d.w / 2, oy + d.h / 2, 12, '#ffd76a');
         AudioSys.smash();
         shakeT = 0.12;
+      } else if (o.type === 'zhangqin' && !o.chasing) {
+        /* 普通形态碰到巡逻中的张钦：不判死，触发追击 */
+        o.chasing = true; o.chaseT = 0; o.cool = 0.9;
+        AudioSys.alert();
+        hintText = '张钦追上来了！跳过他，或引他撞上其他障碍！'; hintT = 2.5;
+      } else if (o.type === 'zhangqin' && o.cool > 0) {
+        /* 追击触发后的宽限期，不判死 */
       } else {
         die();
         return;
@@ -706,6 +760,51 @@ function drawShiwei(x, y, t) {
   ctx.fillStyle = '#9aa0aa'; ctx.fillRect(x + 24, y + 4, 3, 34);
   ctx.fillStyle = '#d4a017'; ctx.fillRect(x + 22, y + 20, 7, 3);
 }
+function drawZhangqin(x, y, t, o) {
+  const chasing = o && o.chasing;
+  const bw = OBST_DEF.zhangqin.w, bh = OBST_DEF.zhangqin.h;
+  // 站立：优先 Zhangqin_standing.png（单帧）；缺失则回退到追击表首帧
+  // 追击：Zhangqin.png（横排奔跑动画，帧数见 SHEET_FRAMES.zhangqin）
+  const standImg = Sprites.map.zhangqin_standing || Sprites.map.zhangqin;
+  const img = chasing ? Sprites.map.zhangqin : standImg;
+  if (img) {
+    const n = chasing ? SHEET_FRAMES.zhangqin : 1;     // 站立恒取单帧（首帧）
+    const fw = img.width / n;
+    const f = chasing ? (Math.floor(t * 10) % n) : 0;
+    const scale = Math.min(bw / fw, bh / img.height);
+    const dw = fw * scale, dh = img.height * scale;
+    ctx.drawImage(img, f * fw, 0, fw, img.height, x + (bw - dw) / 2, y + (bh - dh) / 2, dw, dh);
+  } else {
+    /* 占位：绯袍御史张钦（乌纱帽），追击时前倾+怒目 */
+    const lean = chasing ? 2 : 0;
+    ctx.fillStyle = '#141420';                        // 乌纱帽+帽翅
+    ctx.fillRect(x + 7 + lean, y - 2, 12, 5);
+    ctx.fillRect(x + 2 + lean, y - 1, 5, 2); ctx.fillRect(x + 19 + lean, y - 1, 5, 2);
+    ctx.fillStyle = '#f0c8a0';                        // 脸
+    ctx.fillRect(x + 10 + lean, y + 3, 8, 7);
+    if (chasing) {                                    // 怒目
+      ctx.fillStyle = '#301810';
+      ctx.fillRect(x + 11 + lean, y + 5, 2, 1); ctx.fillRect(x + 15 + lean, y + 5, 2, 1);
+    }
+    ctx.fillStyle = '#8c2f39';                        // 绯袍
+    ctx.fillRect(x + 6 + lean, y + 10, 16, 24);
+    ctx.fillStyle = '#c04040'; ctx.fillRect(x + 6 + lean, y + 12, 16, 2);
+    ctx.fillStyle = '#d4a017';                        // 金腰带
+    ctx.fillRect(x + 6 + lean, y + 20, 16, 2);
+    ctx.fillStyle = '#26263a';                        // 腿
+    ctx.fillRect(x + 8, y + 34, 5, 12); ctx.fillRect(x + 16, y + 34, 5, 12);
+    ctx.fillStyle = '#101018';                        // 脚
+    ctx.fillRect(x + 7, y + 45, 7, 3); ctx.fillRect(x + 15, y + 45, 7, 3);
+    ctx.fillStyle = '#9aa0aa';                        // 佩剑
+    ctx.fillRect(x + 24, y + 6, 3, 30);
+    ctx.fillStyle = '#d4a017'; ctx.fillRect(x + 22, y + 22, 7, 3);
+  }
+  if (chasing && Math.floor(t * 6) % 2 === 0) {       // 追击感叹号
+    ctx.fillStyle = '#e05a4a';
+    ctx.fillRect(x + 13, y - 12, 4, 7);
+    ctx.fillRect(x + 13, y - 3, 4, 2);
+  }
+}
 function drawSuo(x, y) {
   ctx.fillStyle = '#8a8f9c';
   ctx.fillRect(x + 4, y + 8, 10, 9);
@@ -734,7 +833,8 @@ function drawObstacles() {
     const o = obstacles[i];
     const d = OBST_DEF[o.type];
     const oy = d.fly ? G - FLY_OBST_OFFSET : G - d.h;
-    if (o.type === 'shiwei') drawShiwei(o.x, oy, o.t);
+    if (o.type === 'zhangqin') drawZhangqin(o.x, oy, o.t, o);
+    else if (o.type === 'shiwei') drawShiwei(o.x, oy, o.t);
     else if (o.type === 'suo') drawSuo(o.x, oy);
     else drawZouzhe(o.x, oy, o.t);
   }
