@@ -2,6 +2,9 @@
 
 > 《朱厚照出居庸关》—— 8-bit 像素风横版跑酷。躲避巡关御史张钦，拾取「大将军印」
 > 化身威武大将军朱寿，闯过居庸关。张钦追之不及，痛哭失声。
+>
+> **当前版本 v0.8.0**（2026-08-30）｜ 更新详情见 [RELEASE_NOTES.md](./RELEASE_NOTES.md)
+> ｜ 八幕关卡规划见 [dev_plan.md](./dev_plan.md)
 
 纯前端实现：原生 HTML5 Canvas 2D + Vanilla JS，**零框架、零构建、零网络请求**，
 按小红书小工具规范开发（外置脚本 / addEventListener / 无 eval）。
@@ -22,12 +25,12 @@
 
 ### 核心机制
 - **变身**：拾「大将军印」→ 朱寿形态 6 秒，无敌 + 提速 + 撞碎障碍；第三幕保底必出印。
-- **障碍三型**：张钦（地面）、锁（掷出地面）、奏折（空中飞行，需起跳躲避）。
+- **障碍三型**：侍卫（地面）、锁（掷出地面）、奏折（空中飞行，需起跳躲避）。
 
 ## 运行
 
 ```bash
-cd ming_escape
+cd juyong_escape
 python3 -m http.server 8000
 # 浏览器打开 http://localhost:8000
 ```
@@ -39,7 +42,8 @@ python3 -m http.server 8000
 ```
 index.html          # 入口：内联 CSS + <script src="./game.js">
 game.js             # 全部逻辑：双模式引擎、LEVELS 关卡数据、音效合成、渲染
-RELEASE_NOTES.md    # v0.7.0 发布说明
+dev_plan.md         # 八幕关卡规划（剧情 + 参数 + 排期）
+RELEASE_NOTES.md    # v0.8.0 发布说明（含 v0.7.0 存档）
 assets/             # （可选）自定义精灵表，丢进去自动生效
 ```
 
@@ -47,8 +51,10 @@ assets/             # （可选）自定义精灵表，丢进去自动生效
 
 代码内置占位像素小人，缺图也能跑。把手绘 / AI 生成的 8-bit 精灵表 PNG 放入
 `assets/` 即自动替换（文件名与帧数约定见 `game.js` 顶部 `ASSETS` 说明）：
-`zhuhouzhao.png`（朱厚照 4 帧）、`zhushou.png`（朱寿 4 帧）、`zhangqin.png`（张钦 4 帧）、
+`zhuhouzhao.png`（朱厚照 4 帧）、`zhushou.png`（朱寿 4 帧）、`Shiwei.png`（侍卫 1 帧）、
 `yin.png`（大将军印）、`zhangqin_cry.png`（张钦痛哭 8 帧）。透明背景，横排帧。
+（注：朱厚照 / 朱寿 / 侍卫精灵实际放项目根目录亦可，侍卫原为「张钦」，v0.8.0 起改名「侍卫」，
+张钦保留为剧情人物——闭关藏钥的巡关御史与终局痛哭者。）
 
 ## 技术要点
 

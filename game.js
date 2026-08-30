@@ -1,6 +1,6 @@
 'use strict';
 /* ============================================================
- * 《朱厚照出居庸关》 像素跑酷 · ming_escape（MVP v0.7.0）
+ * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（MVP v0.8.0）
  * ------------------------------------------------------------
  * 双模式引擎：
  *   1) 关卡模式「出关记」：3 幕叙事（LEVELS 数据驱动，可扩至 8 幕）
@@ -15,7 +15,7 @@
  * ------------------------------------------------------------
  * 自定义美术（可选，丢进 ./assets/ 自动生效，缺失则代码占位绘制）：
  *   zhuhouzhao.png（朱厚照，4 帧横排）   zhushou.png（朱寿，4 帧）
- *   zhangqin.png（张钦，4 帧）           yin.png（大将军印，1 帧）
+ *   Shiwei.png（侍卫，1 帧）             yin.png（大将军印，1 帧）
  *   zhangqin_cry.png（张钦痛哭，8 帧横排，终局演出用）
  * ============================================================ */
 
@@ -25,10 +25,11 @@ const GRAVITY = 2400;
 const JUMP_V = -820;
 const JUMP_CUT = -300;         // 提前松手截断跳跃
 const PLAYER_X = 72;
-const PLAYER_W = 24;
-const PLAYER_H = 40;
+const PLAYER_W = 28;
+const PLAYER_H = 57;   // 比侍卫障碍物(44)高，玩家更醒目（约原生13×27的2.1×）
 const TRANSFORM_TIME = 6;      // 变身朱寿持续秒数
 const PX_PER_LI = 150;         // 像素 → 里（显示用）
+const FLY_OBST_OFFSET = 100;   // 飞行障碍物(奏折)离地高度偏移：越大越高（原 74）
 const PORTRAIT_SPEED = 0.8;    // 竖屏速度补偿（横向视野短 → 放慢）
 
 /* ---------- 运行时布局（横/竖屏切换） ---------- */
@@ -82,14 +83,14 @@ const AudioSys = {
 };
 
 /* ---------- 精灵表加载（缺失自动回退代码占位绘制） ---------- */
-const SHEET_FRAMES = { zhuhouzhao: 4, zhushou: 4, zhangqin: 1, yin: 1, cry: 8 };
+const SHEET_FRAMES = { zhuhouzhao: 4, zhushou: 4, shiwei: 1, yin: 1, cry: 8 };
 const Sprites = {
   map: {},
   load: function () {
     const files = {
       zhuhouzhao: 'Zhuhouzhao.png',
       zhushou: 'Zhushou.png',
-      zhangqin: 'Zhangqin.png',
+      shiwei: 'Shiwei.png',
       yin: 'assets/yin.png',
       cry: 'assets/zhangqin_cry.png'
     };
@@ -116,7 +117,7 @@ const LEVELS = [
     after: '《明史 · 武宗本纪》：\n「十二年八月，帝微服如昌平。」\n趁夜出京——没有大臣拦得住\n这位向往战场的皇帝。',
     scene: 'palace',
     sky: ['#ffd9a0', '#ffab6b'], far: '#9c4f3f', mid: '#c25e43', ground: '#6b4226',
-    speed: 250, interval: [1.7, 2.4], types: ['zhangqin', 'zouzhe'], length: 9000,
+    speed: 250, interval: [1.7, 2.4], types: ['shiwei', 'zouzhe'], length: 9000,
     sealAt: [0.45],
     hint: '点按跳跃 · 拾「大将军印」变身朱寿！',
     gate: false
@@ -127,9 +128,9 @@ const LEVELS = [
     after: '《明史 · 张钦传》：\n「钦乃负敕印，仗剑坐关门下曰：\n敢言开关者，斩！」\n皇帝悻悻而回——但没人相信，\n他会就此罢休。',
     scene: 'road',
     sky: ['#f6c06a', '#d97a4a'], far: '#6f5a6e', mid: '#8d6a5f', ground: '#4e3a2a',
-    speed: 290, interval: [1.25, 1.9], types: ['zhangqin', 'suo', 'zouzhe'], length: 11000,
+    speed: 290, interval: [1.25, 1.9], types: ['shiwei', 'suo', 'zouzhe'], length: 11000,
     sealAt: [0.3, 0.7],
-    hint: '跳过张钦与「锁」· 别撞飞来的「奏折」！',
+    hint: '跳过侍卫与「锁」· 别撞飞来的「奏折」！',
     gate: false
   },
   {
@@ -138,7 +139,7 @@ const LEVELS = [
     after: '',
     scene: 'pass',
     sky: ['#2d3a5e', '#7a5a72'], far: '#3a3652', mid: '#4d4360', ground: '#2f2a3a',
-    speed: 330, interval: [1.0, 1.6], types: ['zhangqin', 'suo', 'zouzhe'], length: 12000,
+    speed: 330, interval: [1.0, 1.6], types: ['shiwei', 'suo', 'zouzhe'], length: 12000,
     sealAt: [0.8],
     hint: '疾驰！变身朱寿，撞开关门，出关！',
     gate: true
@@ -178,8 +179,8 @@ const MENU_BG = {
 
 /* ---------- 障碍物定义 ---------- */
 const OBST_DEF = {
-  zhangqin: { w: 26, h: 44, fly: false },     // 巡关御史（地面 · 跳过他）
-  suo: { w: 18, h: 18, fly: false },          // 张钦掷出的锁（地面 · 跳过）
+  shiwei: { w: 26, h: 44, fly: false },       // 守关侍卫（地面 · 跳过他）
+  suo: { w: 18, h: 18, fly: false },          // 侍卫掷出的锁（地面 · 跳过）
   zouzhe: { w: 24, h: 14, fly: true }         // 飞来的奏折（空中 · 千万别跳，y=G-74 动态）
 };
 
@@ -347,7 +348,7 @@ function confirmAction() {
 function spawnObstacle() {
   let types;
   if (mode === 'endless') {
-    types = dist > 3000 ? ['zhangqin', 'suo', 'zouzhe'] : ['zhangqin', 'suo'];
+    types = dist > 3000 ? ['shiwei', 'suo', 'zouzhe'] : ['shiwei', 'suo'];
   } else {
     types = currentLevel().types;
   }
@@ -458,7 +459,7 @@ function updatePlay(dt) {
   for (let i = 0; i < obstacles.length; i++) {
     const o = obstacles[i];
     const d = OBST_DEF[o.type];
-    const oy = d.fly ? G - 74 : G - d.h;
+    const oy = d.fly ? G - FLY_OBST_OFFSET : G - d.h;
     const obox = { x: o.x + 2, y: oy + 2, w: d.w - 4, h: d.h - 4 };
     if (rectsOverlap(pr, obox)) {
       if (transformT > 0) {
@@ -679,19 +680,19 @@ function drawBackground(lv) {
 }
 
 /* ---------- 实体绘制 ---------- */
-function drawZhangqin(x, y, t) {
-  const img = Sprites.map.zhangqin;
+function drawShiwei(x, y, t) {
+  const img = Sprites.map.shiwei;
   if (img) {
-    const n = SHEET_FRAMES.zhangqin;
+    const n = SHEET_FRAMES.shiwei;
     const fw = img.width / n;
     const f = Math.floor(t * 8) % n;
-    const bw = OBST_DEF.zhangqin.w, bh = OBST_DEF.zhangqin.h;
+    const bw = OBST_DEF.shiwei.w, bh = OBST_DEF.shiwei.h;
     const scale = Math.min(bw / fw, bh / img.height);
     const dw = fw * scale, dh = img.height * scale;
     ctx.drawImage(img, f * fw, 0, fw, img.height, x + (bw - dw) / 2, y + (bh - dh) / 2, dw, dh);
     return;
   }
-  /* 占位：蓝袍御史，仗剑而立 */
+  /* 占位：蓝袍侍卫，仗剑而立 */
   ctx.fillStyle = '#f0c8a0'; ctx.fillRect(x + 8, y + 2, 10, 9);
   ctx.fillStyle = '#1e293b'; ctx.fillRect(x + 6, y - 2, 14, 5);
   ctx.fillStyle = '#1e3a8a'; ctx.fillRect(x + 5, y + 11, 16, 22);
@@ -732,8 +733,8 @@ function drawObstacles() {
   for (let i = 0; i < obstacles.length; i++) {
     const o = obstacles[i];
     const d = OBST_DEF[o.type];
-    const oy = d.fly ? G - 74 : G - d.h;
-    if (o.type === 'zhangqin') drawZhangqin(o.x, oy, o.t);
+    const oy = d.fly ? G - FLY_OBST_OFFSET : G - d.h;
+    if (o.type === 'shiwei') drawShiwei(o.x, oy, o.t);
     else if (o.type === 'suo') drawSuo(o.x, oy);
     else drawZouzhe(o.x, oy, o.t);
   }
