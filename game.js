@@ -1,6 +1,6 @@
 'use strict';
 /* ============================================================
- * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（MVP v0.9.0）
+ * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（MVP v0.9.1）
  * ------------------------------------------------------------
  * 双模式引擎：
  *   1) 关卡模式「出关记」：3 幕叙事（LEVELS 数据驱动，可扩至 8 幕）
@@ -19,7 +19,7 @@
  *   Zhangqin_standing.png（张钦，站立单帧；未被玩家碰撞前用）
  *   Zhangqin.png（张钦，追击奔跑动画，N 帧横排；追玩家时用，帧数见 SHEET_FRAMES.zhangqin）
  *   yin.png（大将军印，1 帧）
- *   zhangqin_cry.png（张钦痛哭，8 帧横排，终局演出用）
+ *   zhangqin_crying.png（张钦痛哭，8 帧横排，终局演出用）
  * ============================================================ */
 
 /* ---------- 渲染与物理常量 ---------- */
@@ -98,7 +98,7 @@ const Sprites = {
       zhangqin: 'Zhangqin.png',
       zhangqin_standing: 'Zhangqin_standing.png',
       yin: 'assets/yin.png',
-      cry: 'assets/zhangqin_cry.png'
+      cry: 'Zhangqin_crying.png'
     };
     const keys = Object.keys(files);
     for (let i = 0; i < keys.length; i++) {
