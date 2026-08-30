@@ -3,7 +3,7 @@
 > 《朱厚照出居庸关》—— 8-bit 像素风横版跑酷。躲避巡关御史张钦，拾取「大将军印」
 > 化身威武大将军朱寿，闯过居庸关。张钦追之不及，痛哭失声。
 >
-> **当前版本 v0.9.1**（2026-08-30）｜ 更新详情见 [RELEASE_NOTES.md](./RELEASE_NOTES.md)
+> **当前版本 v0.9.2**（2026-08-31）｜ 更新详情见 [RELEASE_NOTES.md](./RELEASE_NOTES.md)
 > ｜ 八幕关卡规划见 [dev_plan.md](./dev_plan.md)
 
 纯前端实现：原生 HTML5 Canvas 2D + Vanilla JS，**零框架、零构建、零网络请求**，

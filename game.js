@@ -1,6 +1,6 @@
 'use strict';
 /* ============================================================
- * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（MVP v0.9.1）
+ * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（MVP v0.9.2）
  * ------------------------------------------------------------
  * 双模式引擎：
  *   1) 关卡模式「出关记」：3 幕叙事（LEVELS 数据驱动，可扩至 8 幕）
@@ -98,7 +98,10 @@ const Sprites = {
       zhangqin: 'Zhangqin.png',
       zhangqin_standing: 'Zhangqin_standing.png',
       yin: 'assets/yin.png',
-      cry: 'Zhangqin_crying.png'
+      cry: 'Zhangqin_crying.png',
+      bg_palace: 'scene_palace.png',
+      bg_road: 'scene_road.png',
+      bg_pass: 'scene_pass.png'
     };
     const keys = Object.keys(files);
     for (let i = 0; i < keys.length; i++) {
@@ -727,7 +730,17 @@ function bgPass(lv) {
   }
 }
 function drawBackground(lv) {
-  if (lv.scene === 'palace') bgPalace(lv);
+  /* 优先用 AI 生成的像素画背景 PNG（1:1 同步滚动：每 480px 世界距离完整循环一次，等比铺满画布） */
+  const bgKey = lv.scene === 'palace' ? 'bg_palace' : lv.scene === 'road' ? 'bg_road' : 'bg_pass';
+  const img = Sprites.map[bgKey];
+  if (img) {
+    const destH = VH;
+    const destW = img.width * destH / img.height;
+    const dx = -(dist % destW);
+    for (let x = dx - destW; x < VW; x += destW) {
+      ctx.drawImage(img, 0, 0, img.width, img.height, x, 0, destW, destH);
+    }
+  } else if (lv.scene === 'palace') bgPalace(lv);
   else if (lv.scene === 'road') bgRoad(lv);
   else bgPass(lv);
   drawGround(lv);
