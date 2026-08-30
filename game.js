@@ -1,6 +1,6 @@
 'use strict';
 /* ============================================================
- * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（MVP v0.9.2）
+ * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（MVP v0.9.3）
  * ------------------------------------------------------------
  * 双模式引擎：
  *   1) 关卡模式「出关记」：3 幕叙事（LEVELS 数据驱动，可扩至 8 幕）
@@ -1190,7 +1190,7 @@ function drawMenu() {
   ctx.textAlign = 'center';
   ctx.fillStyle = '#ffd76a';
   ctx.font = 'bold 10px sans-serif';
-  ctx.fillText('正德十二年 · 像素跑酷', VW / 2, portrait ? 120 : 52);
+  ctx.fillText('正德十二年·逃', VW / 2, portrait ? 120 : 52);
   ctx.fillStyle = '#ffffff';
   ctx.font = 'bold 26px sans-serif';
   ctx.fillText('朱厚照出居庸关', VW / 2, portrait ? 158 : 84);
