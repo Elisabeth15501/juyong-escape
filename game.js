@@ -1,6 +1,6 @@
 'use strict';
 /* ============================================================
- * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（MVP v0.9.3）
+ * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v0.10.0）
  * ------------------------------------------------------------
  * 双模式引擎：
  *   1) 关卡模式「出关记」：3 幕叙事（LEVELS 数据驱动，可扩至 8 幕）
@@ -20,6 +20,8 @@
  *   Zhangqin.png（张钦，追击奔跑动画，N 帧横排；追玩家时用，帧数见 SHEET_FRAMES.zhangqin）
  *   yin.png（大将军印，1 帧）
  *   zhangqin_crying.png（张钦痛哭，8 帧横排，终局演出用）
+ *   Gudayong_standing.png（谷大用站立态，1 帧；未被玩家碰触前）
+ *   Gudayong_moving.png（谷大用跟随态，4 帧横排奔跑循环）
  * ============================================================ */
 
 /* ---------- 渲染与物理常量 ---------- */
@@ -34,6 +36,9 @@ const TRANSFORM_TIME = 6;      // 变身朱寿持续秒数
 const PX_PER_LI = 150;         // 像素 → 里（显示用）
 const FLY_OBST_OFFSET = 100;   // 飞行障碍物(奏折)离地高度偏移：越大越高（原 74）
 const PORTRAIT_SPEED = 0.8;    // 竖屏速度补偿（横向视野短 → 放慢）
+const COMP_W = 30;             // 谷大用（同伴）碰撞/绘制宽
+const COMP_H = 52;             // 谷大用比玩家（57）略矮：年长微驼的老太监
+const COMP_FOLLOW_DX = 36;     // 跟随时与玩家的水平间距
 
 /* ---------- 运行时布局（横/竖屏切换） ---------- */
 let VW = 480;                  // 逻辑宽
@@ -87,7 +92,7 @@ const AudioSys = {
 };
 
 /* ---------- 精灵表加载（缺失自动回退代码占位绘制） ---------- */
-const SHEET_FRAMES = { zhuhouzhao: 4, zhushou: 4, shiwei: 1, zhangqin: 4, zhangqin_standing: 1, yin: 1, cry: 8 };
+const SHEET_FRAMES = { zhuhouzhao: 4, zhushou: 4, shiwei: 1, zhangqin: 4, zhangqin_standing: 1, yin: 1, cry: 8, gudayong_standing: 1, gudayong_moving: 4 };
 const Sprites = {
   map: {},
   load: function () {
@@ -99,6 +104,8 @@ const Sprites = {
       zhangqin_standing: 'Zhangqin_standing.png',
       yin: 'assets/yin.png',
       cry: 'Zhangqin_crying.png',
+      gudayong_standing: 'Gudayong_standing.png',   // 站立态（未被玩家碰触前）
+      gudayong_moving: 'Gudayong_moving.png',       // 跟随态（4 帧奔跑循环）
       bg_palace: 'scene_palace.png',
       bg_road: 'scene_road.png',
       bg_pass: 'scene_pass.png'
@@ -204,6 +211,7 @@ let dist, speed, spawnT, sealT, transformT, hintT, shakeT;
 let usedSeals, gateDone, finaleT, finaleSmashed, finaleCry;
 let hintText = '';
 let endlessBest = parseInt(store.get('ming_escape_best') || '0', 10) || 0;
+let companion = null, companionSpawnAt = -1, companionUsed = false;
 let uiButtons = [];
 
 /* ---------- 画布与自适应布局 ---------- */
@@ -271,6 +279,9 @@ function resetRun() {
   finaleT = 0;
   finaleSmashed = false;
   finaleCry = false;
+  companion = null;
+  companionUsed = false;
+  companionSpawnAt = mode === 'endless' ? 1500 + Math.random() * 2000 : -1;
 }
 
 function startLevel(i) {
@@ -453,13 +464,26 @@ function updatePlay(dt) {
     o.x -= mv; o.t += dt;
     if (o.type === 'zhangqin') {
       if (o.chasing) {
-        o.chaseT += dt;
-        if (o.cool > 0) o.cool -= dt;
-        /* 追击：横向扑向玩家（不会跳跃，跳过他即可甩开） */
-        const dx = PLAYER_X - o.x;
-        o.x += Math.max(-240, Math.min(240, dx * 3)) * dt;
+        if (transformT > 0) {
+          /* 玩家变身：张钦追不上「威武大将军」，放弃追击被甩在身后（shaken：不再参与碰撞） */
+          o.chasing = false;
+          o.shaken = true;
+          hintText = '张钦追不上「大将军」，被远远甩在身后！'; hintT = 2;
+        } else {
+          o.chaseT += dt;
+          if (o.cool > 0) o.cool -= dt;
+          /* 追击：前馈（抵消世界流速）+ 比例修正 → 稳定贴在玩家身后。
+             「身后」= 玩家左侧（世界左卷 = 玩家向右跑，右侧是玩家的前方）。
+             精灵边缘间距 10px；双方碰撞盒各内缩 2px → 盒间净距 15px。
+             谷大用护驾时张钦退到内应身后：谷大用正挡在皇帝与追兵之间
+             （对应「谷大用守关，毋纵廷臣出」的位置关系）。 */
+          const zqGap = (companion && companion.following) ? 14 + COMP_W : 10;
+          const err = o.x - (PLAYER_X - OBST_DEF.zhangqin.w - zqGap);
+          const corr = Math.max(-240, Math.min(300, err * 3));  // 正=向前贴，负=回落
+          o.x += (speed - corr) * dt;
+        }
       } else {
-        /* 巡逻：原地左右踱步 */
+        /* 巡逻：原地左右踱步（被甩状态同此：随世界流速漂向屏幕左侧退场） */
         o.x += Math.sin(o.t * 1.6) * 42 * dt;
       }
     }
@@ -512,11 +536,24 @@ function updatePlay(dt) {
     const oy = d.fly ? G - FLY_OBST_OFFSET : G - d.h;
     const obox = { x: o.x + 2, y: oy + 2, w: d.w - 4, h: d.h - 4 };
     if (rectsOverlap(pr, obox)) {
-      if (transformT > 0) {
+      if (o.type === 'zhangqin' && o.shaken) {
+        /* 被甩的张钦：漂离途中不再参与任何碰撞（玩家从他身边跑过） */
+      } else if (transformT > 0) {
+        /* 变身朱寿：无敌撞碎——迎面遇上张钦也一样撞碎；护驾不受影响、不消耗 */
         o.dead = true;
         burst(o.x + d.w / 2, oy + d.h / 2, 12, '#ffd76a');
         AudioSys.smash();
         shakeT = 0.12;
+      } else if (o.type === 'zhangqin' && !o.chasing && companion && companion.following) {
+        /* 谷大用护驾：直接拦下巡逻张钦，玩家脱身（护驾消耗） */
+        o.dead = true;
+        burst(o.x + d.w / 2, oy + d.h / 2, 16, '#e0705a');
+        burst(companion.x + COMP_W / 2, companion.y + COMP_H / 2, 10, '#d8d0e8');
+        AudioSys.smash();
+        AudioSys.hit();
+        shakeT = 0.2;
+        companion = null;
+        hintText = '谷大用拦下张钦：「休得惊驾，陛下快走！」'; hintT = 2.5;
       } else if (o.type === 'zhangqin' && !o.chasing) {
         /* 普通形态碰到巡逻中的张钦：不判死，触发追击 */
         o.chasing = true; o.chaseT = 0; o.cool = 0.9;
@@ -524,6 +561,16 @@ function updatePlay(dt) {
         hintText = '张钦追上来了！跳过他，或引他撞上其他障碍！'; hintT = 2.5;
       } else if (o.type === 'zhangqin' && o.cool > 0) {
         /* 追击触发后的宽限期，不判死 */
+      } else if (companion && companion.following) {
+        /* 谷大用护驾：替陛下挡下一次撞击，护驾解除（玩家不死）——含追击张钦的抓捕 */
+        o.dead = true;
+        burst(o.x + d.w / 2, oy + d.h / 2, 16, '#e8b4c8');
+        burst(companion.x + COMP_W / 2, companion.y + COMP_H / 2, 10, '#d8d0e8');
+        AudioSys.smash();
+        AudioSys.hit();
+        shakeT = 0.2;
+        companion = null;
+        hintText = '谷大用挡下了这一击：「奴婢……告退！」'; hintT = 2.5;
       } else {
         die();
         return;
@@ -531,6 +578,49 @@ function updatePlay(dt) {
     }
   }
   obstacles = obstacles.filter(function (o) { return !o.dead; });
+
+  /* ---------- 谷大用（ companion 护驾） ----------
+   * 规则：第二关起、关卡中段（45%）从右侧入画；无限模式随机出现。
+   * 玩家碰触后跟随（同步跳跃），直到关卡结束 / 终局 / 玩家未变身时
+   * 撞上障碍物——由谷大用替陛下挡下一次，护驾即解除。
+   * 变身朱寿（无敌）时撞碎障碍物不算，护驾不受变身影响。 */
+  if (mode === 'level' && levelIndex >= 1 && !companion && !companionUsed && dist >= lv.length * 0.45) {
+    companion = { x: VW + 40, y: G - COMP_H, vy: 0, onGround: true, following: false, animT: 0 };
+    companionUsed = true;                              // 关卡模式每幕只登场一次：错过/护驾消耗后不再刷新
+  }
+  if (mode === 'endless' && !companion && dist >= companionSpawnAt) {
+    companion = { x: VW + 40, y: G - COMP_H, vy: 0, onGround: true, following: false, animT: 0 };
+    companionSpawnAt = dist + 2500 + Math.random() * 2000;
+  }
+  if (companion) {
+    companion.animT += dt;
+    if (companion.following) {
+      /* 贴身护驾：横坐标钉死在玩家身后，纵坐标与玩家同步（脚底对齐 → 玩家跳他也跳） */
+      companion.x = PLAYER_X - COMP_FOLLOW_DX;
+      companion.y = player.y + (PLAYER_H - COMP_H);
+      companion.vy = player.vy;
+      companion.onGround = player.onGround;
+    } else {
+      companion.x -= mv;
+      if (!companion.onGround) {
+        companion.vy += GRAVITY * dt;
+        companion.y += companion.vy * dt;
+        if (companion.y >= G - COMP_H) {
+          companion.y = G - COMP_H;
+          companion.vy = 0;
+          companion.onGround = true;
+        }
+      }
+      const cr = { x: companion.x + 3, y: companion.y + 3, w: COMP_W - 6, h: COMP_H - 5 };
+      if (rectsOverlap(pr, cr)) {
+        companion.following = true;
+        AudioSys.seal();
+        AudioSys.transform();
+        hintText = '谷大用：「陛下，奴婢护驾！」'; hintT = 2.5;
+      }
+      if (companion.x < -60) companion = null;
+    }
+  }
 
   /* 关门判定：变身朱寿=撞碎门（隐藏成就）；否则谷大用开门 */
   if (gate && !gateDone && gate.x <= PLAYER_X + PLAYER_W) {
@@ -545,6 +635,7 @@ function updatePlay(dt) {
     } else {
       gate.opened = true;
     }
+    companion = null;
     state = 'finale';
     finaleT = 0;
     return;
@@ -552,6 +643,7 @@ function updatePlay(dt) {
 
   /* 普通关完成 */
   if (mode === 'level' && !lv.gate && dist >= lv.length) {
+    companion = null;
     AudioSys.clear();
     state = 'clear';
   }
@@ -574,6 +666,7 @@ function die() {
     const li = fmtLi(dist);
     if (li > endlessBest) { endlessBest = li; store.set('ming_escape_best', String(li)); }
   }
+  companion = null;
   state = 'gameover';
 }
 
@@ -926,6 +1019,56 @@ function drawPlayer() {
     ctx.fillRect(x - 2, y - 2, PLAYER_W + 4, PLAYER_H + 4);
   }
 }
+function drawGudayong(x, y, t, c) {
+  const following = c && c.following;
+  const img = following ? Sprites.map.gudayong_moving : Sprites.map.gudayong_standing;
+  if (img) {
+    const n = following ? SHEET_FRAMES.gudayong_moving : 1;
+    const fw = img.width / n;
+    const f = following ? (Math.floor(t * 10) % n) : 0; // 站立恒取首帧
+    /* 等比缩放：各图原生尺寸 → COMP_W×COMP_H 盒内（跑动时轻微上下颠步） */
+    const bob = following && player.onGround ? Math.floor(t * 10) % 2 : 0;
+    const scale = Math.min(COMP_W / fw, COMP_H / img.height);
+    const dw = fw * scale, dh = img.height * scale;
+    ctx.drawImage(img, f * fw, 0, fw, img.height,
+                  x + (COMP_W - dw) / 2, y + (COMP_H - dh) - bob, dw, dh);
+  } else {
+    /* 占位：提督西厂的谷大用——大红蟒衣 · 乌纱描金曲脚帽 · 拂尘 · 无须老太监 */
+    const bob = following && player.onGround ? Math.floor(t * 10) % 2 : 0;
+    const yy = y + bob;
+    ctx.fillStyle = '#141420';                          // 乌纱描金曲脚帽（帽体+两侧上翘曲脚）
+    ctx.fillRect(x + 8, yy - 2, 14, 6);
+    ctx.fillRect(x + 2, yy - 4, 6, 2);                  // 左曲脚
+    ctx.fillRect(x + 22, yy - 4, 6, 2);                 // 右曲脚
+    ctx.fillStyle = '#e8d0b8';                          // 苍白无须老脸
+    ctx.fillRect(x + 11, yy + 4, 9, 8);
+    ctx.fillStyle = '#301810';                          // 细眼
+    ctx.fillRect(x + 13, yy + 7, 2, 1); ctx.fillRect(x + 17, yy + 7, 2, 1);
+    ctx.fillStyle = '#8a1f2e';                          // 大红蟒衣（曳撒）
+    ctx.fillRect(x + 5, yy + 12, 20, 28);
+    ctx.fillStyle = '#c8a04a';                          // 金线蟒纹（胸背点缀）
+    ctx.fillRect(x + 10, yy + 17, 3, 3); ctx.fillRect(x + 17, yy + 20, 3, 3);
+    ctx.fillRect(x + 5, yy + 14, 20, 1);                // 领缘
+    ctx.fillStyle = '#701822';                          // 下摆开衩阴影
+    ctx.fillRect(x + 5, yy + 34, 20, 6);
+    ctx.fillStyle = '#1a1a24';                          // 皂靴
+    ctx.fillRect(x + 8, yy + 40, 6, 4); ctx.fillRect(x + 16, yy + 40, 6, 4);
+    ctx.fillStyle = '#5a4a3a';                          // 拂尘杆（右手侧）
+    ctx.fillRect(x + 25, yy + 12, 2, 16);
+    ctx.fillStyle = '#e8e4dc';                          // 拂尘白丝
+    ctx.fillRect(x + 24, yy + 28, 4, 9);
+    ctx.fillStyle = '#d4a017';                          // 镶金腰带来一点权宦气派
+    ctx.fillRect(x + 5, yy + 24, 20, 2);
+  }
+  if (following) {                                      // 护驾状态小标
+    ctx.fillStyle = 'rgba(20,24,34,0.72)';
+    ctx.fillRect(x + 3, y - 16, 24, 12);
+    ctx.fillStyle = '#ffd76a';
+    ctx.font = 'bold 8px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('护驾', x + 15, y - 7);
+  }
+}
 function drawGate() {
   if (!gate) return;
   const x = Math.floor(gate.x);
@@ -1225,6 +1368,7 @@ function render() {
     drawGate();
     drawObstacles();
     drawItems();
+    if (companion) drawGudayong(Math.floor(companion.x), Math.floor(companion.y), companion.animT, companion);
     drawPlayer();
     drawParticles();
   }

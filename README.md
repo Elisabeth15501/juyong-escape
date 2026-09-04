@@ -3,7 +3,7 @@
 > 8-bit 像素风横版跑酷。正德十二年，武宗朱厚照微服出京，要抢在巡关御史张钦眼皮底下闯出居庸关；
 > 拾取「大将军印」化身朱寿，撞碎关门、直奔应州。张钦追之不及，痛哭失声。
 >
-> **当前版本 v0.9.3**（2026-08-31）｜ 更新详情见 [RELEASE_NOTES.md](./RELEASE_NOTES.md)
+> **当前版本 v0.10.0**（2026-09-04）｜ 更新详情见 [RELEASE_NOTES.md](./RELEASE_NOTES.md)
 > ｜ 八幕关卡规划见 [dev_plan.md](./dev_plan.md)
 > ｜ **已上线小红书小工具**（链接见文末）
 
@@ -40,6 +40,11 @@
 ### 核心机制
 
 - **变身**：拾「大将军印」→ 朱寿形态 6 秒，无敌 + 提速 + 撞碎障碍；第三幕保底必出印。
+- **护驾同伴 · 谷大用**：第二幕起、关卡中段从右侧入画（无限模式随机出现），
+  碰到他后他便贴身跟随——玩家跳、他也跟着跳。跟随期间普通形态撞上障碍物
+  由他替陛下**挡下一次**（玩家不死），护驾即解除；每幕仅登场一次；
+  不受变身影响（朱寿无敌撞碎障碍不消耗护驾）。史实彩蛋：正德十二年武宗正是
+  命谷大用代守居庸关，才甩开了张钦。
 - **障碍四型**：
   - 侍卫（地面，跳过）
   - 锁（地面，掷出）
@@ -60,13 +65,14 @@
 ### 项目结构
 
 ```
-index.html              # 入口：内联 CSS + <script src="./game.js?v=0.9.3">
+index.html              # 入口：内联 CSS + <script src="./game.js?v=0.10.0">
 game.js                 # 全部逻辑：双模式引擎、LEVELS 关卡数据、音效合成、渲染
 dev_plan.md             # 八幕关卡规划（剧情 + 参数 + 排期）
-RELEASE_NOTES.md        # 各版本发布说明（当前 v0.9.3）
+RELEASE_NOTES.md        # 各版本发布说明（当前 v0.10.0）
 Zhuhouzhao.png          # 朱厚照（4 帧）        Zhushou.png        # 朱寿（4 帧）
 Shiwei.png              # 侍卫（1 帧）          Zhangqin.png       # 张钦追击（4 帧）
 Zhangqin_standing.png   # 张钦站立（1 帧）      Zhangqin_crying.png # 张钦痛哭（8 帧）
+Gudayong.png            # 谷大用（同伴，1 帧）
 scene_palace.png        # 第一幕背景（故宫）    scene_road.png     # 第二幕背景（山道）
 scene_pass.png          # 第三幕背景（居庸关）
 ```
@@ -80,6 +86,7 @@ scene_pass.png          # 第三幕背景（居庸关）
 - `Shiwei.png`（侍卫，1 帧）
 - `Zhangqin_standing.png`（张钦站立，1 帧）· `Zhangqin.png`（张钦追击，4 帧）
 - `Zhangqin_crying.png`（张钦痛哭，8 帧，终局演出）
+- `Gudayong.png`（谷大用，护驾同伴，1 帧 16×28）
 - `scene_palace.png` / `scene_road.png` / `scene_pass.png`（三幕像素画背景，1024×576）
 - 缺失任意一张 → 对应元素自动回退为程序化绘制（背景）或代码占位（角色）
 
