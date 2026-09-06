@@ -1,7 +1,8 @@
 'use strict';
 /* ============================================================
- * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v0.10.0）
+ * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v0.10.1）
  * ------------------------------------------------------------
+ * v0.10.1：游戏内暂停（右上角暂停键 / P·Esc 键；暂停菜单：继续亲政 / 回銮主菜单）
  * 双模式引擎：
  *   1) 关卡模式「出关记」：3 幕叙事（LEVELS 数据驱动，可扩至 8 幕）
  *   2) 无限跑酷「居庸关」：速度递增，比拼奔袭里数（背景=居庸关夜色）
@@ -203,6 +204,7 @@ const OBST_DEF = {
 
 /* ---------- 运行时状态 ---------- */
 let state = 'menu';            // menu / story / play / clear / finale / gameover
+let paused = false;            // 游戏内暂停（仅 play 态有效；暂停时逻辑冻结、渲染暂停菜单）
 let mode = 'level';            // level / endless
 let levelIndex = 0;
 let gt = 0, last = 0;
@@ -282,6 +284,7 @@ function resetRun() {
   companion = null;
   companionUsed = false;
   companionSpawnAt = mode === 'endless' ? 1500 + Math.random() * 2000 : -1;
+  paused = false;
 }
 
 function startLevel(i) {
@@ -299,7 +302,7 @@ function startEndless() {
   state = 'play';
 }
 
-function toMenu() { state = 'menu'; }
+function toMenu() { paused = false; state = 'menu'; }
 
 function retry() {
   if (mode === 'level') startLevel(levelIndex);
@@ -313,7 +316,7 @@ function nextLevel() {
 
 /* ---------- 输入 ---------- */
 function jump() {
-  if (state !== 'play') return;
+  if (state !== 'play' || paused) return;
   if (player.onGround) {
     player.onGround = false;
     player.vy = JUMP_V;
@@ -336,23 +339,38 @@ canvas.addEventListener('pointerdown', function (e) {
 canvas.addEventListener('pointerup', function (e) { e.preventDefault(); releaseJump(); });
 
 window.addEventListener('keydown', function (e) {
+  if (e.code === 'KeyP' || e.code === 'Escape') {
+    e.preventDefault();
+    togglePause();
+    return;
+  }
   if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
     e.preventDefault();
     AudioSys.ensure();
-    if (state === 'play') jump();
-    else confirmAction();
+    if (state === 'play') {
+      if (paused) { paused = false; return; }   // 暂停中按空格 = 继续游戏
+      jump();
+    } else {
+      confirmAction();
+    }
   }
 });
 window.addEventListener('keyup', function (e) {
   if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') releaseJump();
 });
 
+function togglePause() {
+  if (state !== 'play') return;
+  paused = !paused;
+}
+
 function handleTap(lx, ly) {
-  if (state === 'play') { jump(); return; }
+  /* 按钮优先（含游戏内右上角暂停键与暂停菜单按钮），再落到跳跃 */
   for (let i = 0; i < uiButtons.length; i++) {
     const b = uiButtons[i];
     if (lx >= b.x && lx <= b.x + b.w && ly >= b.y && ly <= b.y + b.h) { b.cb(); return; }
   }
+  if (state === 'play') { if (!paused) jump(); return; }
   if (state === 'story') { state = 'play'; return; }
   if (state === 'finale' && finaleT > 9) { toMenu(); return; }
 }
@@ -1133,6 +1151,19 @@ function button(x, y, w, h, label, cb, primary) {
 }
 function drawHUD() {
   ctx.textAlign = 'left';
+  /* 游戏内暂停键：右上角双竖条图标（变身条出现时下移避让） */
+  if (state === 'play' && !paused) {
+    const pbx = VW - 26, pby = transformT > 0 ? 34 : 8;
+    uiButtons.push({ x: pbx, y: pby, w: 18, h: 18, cb: togglePause });
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(pbx, pby, 18, 18);
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(pbx + 0.5, pby + 0.5, 17, 17);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(pbx + 5, pby + 4, 3, 10);
+    ctx.fillRect(pbx + 10, pby + 4, 3, 10);
+  }
   if (mode === 'level') {
     const lv = LEVELS[levelIndex];
     ctx.fillStyle = 'rgba(0,0,0,0.4)';
@@ -1175,6 +1206,22 @@ function drawHUD() {
     ctx.fillText(hintText, VW / 2, VH - 21);
     ctx.globalAlpha = 1;
   }
+}
+function drawPauseOverlay() {
+  ctx.fillStyle = 'rgba(8,10,18,0.72)';
+  ctx.fillRect(0, 0, VW, VH);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffd76a';
+  ctx.font = 'bold 16px sans-serif';
+  ctx.fillText('圣驾暂驻', VW / 2, portrait ? VH / 2 - 52 : VH / 2 - 44);
+  ctx.fillStyle = '#b8b4c8';
+  ctx.font = '10px sans-serif';
+  ctx.fillText('途中暂停 · 不计胜负', VW / 2, portrait ? VH / 2 - 30 : VH / 2 - 24);
+  button(VW / 2 - 70, portrait ? VH / 2 - 4 : VH / 2 - 2, 140, 30, '继续亲政', function () { paused = false; }, true);
+  button(VW / 2 - 70, portrait ? VH / 2 + 40 : VH / 2 + 40, 140, 30, '回銮 · 主菜单', toMenu, false);
+  ctx.fillStyle = '#6a6680';
+  ctx.font = '9px sans-serif';
+  ctx.fillText('按 P / Esc / 空格 也可继续', VW / 2, portrait ? VH / 2 + 88 : VH / 2 + 86);
 }
 function drawStoryOverlay() {
   const lv = LEVELS[levelIndex];
@@ -1377,6 +1424,7 @@ function render() {
   if (state === 'story') drawStoryOverlay();
   else if (state === 'clear') drawClearOverlay();
   else if (state === 'gameover') drawGameOverOverlay();
+  else if (state === 'play' && paused) drawPauseOverlay();
 }
 
 /* ---------- 主循环 ---------- */
@@ -1385,6 +1433,12 @@ function frame(now) {
   const dt = Math.min(0.033, (now - last) / 1000);
   last = now;
   gt += dt;
+  if (paused) {
+    /* 暂停：逻辑全部冻结，仅渲染暂停菜单（gt 继续走只影响装饰动画） */
+    render();
+    requestAnimationFrame(frame);
+    return;
+  }
   if (state === 'play') {
     updatePlay(dt);
   } else if (state === 'finale') {
