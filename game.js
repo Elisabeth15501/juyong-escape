@@ -1,8 +1,8 @@
 'use strict';
 /* ============================================================
- * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v0.10.1）
+ * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v0.10.2）
  * ------------------------------------------------------------
- * v0.10.1：游戏内暂停（右上角暂停键 / P·Esc 键；暂停菜单：继续亲政 / 回銮主菜单）
+ * v0.10.2：HUD 重排——暂停键移至左上角进度条下方；竖屏模式左上角模块下移 15px（拇指友好），横版贴顶
  * 双模式引擎：
  *   1) 关卡模式「出关记」：3 幕叙事（LEVELS 数据驱动，可扩至 8 幕）
  *   2) 无限跑酷「居庸关」：速度递增，比拼奔袭里数（背景=居庸关夜色）
@@ -1151,9 +1151,9 @@ function button(x, y, w, h, label, cb, primary) {
 }
 function drawHUD() {
   ctx.textAlign = 'left';
-  /* 游戏内暂停键：右上角双竖条图标（变身条出现时下移避让） */
+  /* 游戏内暂停键：左上角、进度条面板下方（与面板左对齐）；仅竖屏下移 15px 方便拇指触达 */
   if (state === 'play' && !paused) {
-    const pbx = VW - 26, pby = transformT > 0 ? 34 : 8;
+    const pbx = 8, pby = (portrait ? 53 : 38);
     uiButtons.push({ x: pbx, y: pby, w: 18, h: 18, cb: togglePause });
     ctx.fillStyle = 'rgba(0,0,0,0.4)';
     ctx.fillRect(pbx, pby, 18, 18);
@@ -1166,25 +1166,27 @@ function drawHUD() {
   }
   if (mode === 'level') {
     const lv = LEVELS[levelIndex];
+    const hy = portrait ? 23 : 8;   /* 竖屏整体下移 15px，方便拇指操作；横版贴顶 */
     ctx.fillStyle = 'rgba(0,0,0,0.4)';
-    ctx.fillRect(8, 8, 190, 26);
+    ctx.fillRect(8, hy, 190, 26);
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 9px sans-serif';
-    ctx.fillText(lv.act + ' · ' + lv.title, 14, 19);
+    ctx.fillText(lv.act + ' · ' + lv.title, 14, hy + 11);
     ctx.strokeStyle = 'rgba(255,255,255,0.5)';
     ctx.lineWidth = 1;
-    ctx.strokeRect(14, 22, 160, 5);
+    ctx.strokeRect(14, hy + 14, 160, 5);
     ctx.fillStyle = '#ffd76a';
-    ctx.fillRect(15, 23, Math.min(1, dist / lv.length) * 158, 3);
+    ctx.fillRect(15, hy + 15, Math.min(1, dist / lv.length) * 158, 3);
   } else {
+    const hy = portrait ? 23 : 8;
     ctx.fillStyle = 'rgba(0,0,0,0.4)';
-    ctx.fillRect(8, 8, 120, 26);
+    ctx.fillRect(8, hy, 120, 26);
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 10px sans-serif';
-    ctx.fillText('奔袭 ' + fmtLi(dist) + ' 里', 14, 19);
+    ctx.fillText('奔袭 ' + fmtLi(dist) + ' 里', 14, hy + 11);
     ctx.fillStyle = '#9a9ab0';
     ctx.font = '9px sans-serif';
-    ctx.fillText('最远 ' + endlessBest + ' 里', 14, 29);
+    ctx.fillText('最远 ' + endlessBest + ' 里', 14, hy + 21);
   }
   if (transformT > 0) {
     ctx.fillStyle = 'rgba(0,0,0,0.4)';
