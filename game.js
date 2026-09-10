@@ -1,10 +1,16 @@
 'use strict';
 /* ============================================================
- * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v0.10.2）
+ * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.0.0-wip 本地预览版）
  * ------------------------------------------------------------
- * v0.10.2：HUD 重排——暂停键移至左上角进度条下方；竖屏模式左上角模块下移 15px（拇指友好），横版贴顶
+ * v1.0.0：八幕扩关 + 关卡选择——
+ *   - LEVELS 3 幕 → 8 幕（数据驱动，NES 难度锯齿：教学→施压→爆发→喘息→极速→最密→终局）
+ *   - 幕 2 夜色 / 幕 6 破晓：tint 色罩（AI 背景 PNG 之上叠半透明色层）
+ *   - 每幕 title screen 新增「史册」页：明史 + 实录双源文献节录（story 屏翻页）
+ *   - 幕 5 奏折挂谏言彩蛋（随机文案）
+ *   - 幕 8 终局字幕更新为应州大捷终章 + 「史辨」三行对照
+ *   - 主菜单「出关记」选关页：通关一幕解锁下一幕（localStorage 持久化）
  * 双模式引擎：
- *   1) 关卡模式「出关记」：3 幕叙事（LEVELS 数据驱动，可扩至 8 幕）
+ *   1) 关卡模式「出关记」：八幕叙事（LEVELS 数据驱动）
  *   2) 无限跑酷「居庸关」：速度递增，比拼奔袭里数（背景=居庸关夜色）
  * 核心机制：拾取「大将军印」→ 变身威武大将军朱寿（无敌 + 提速）
  *           第 3 幕终局：撞开/通过居庸关门 → 张钦痛哭失声演出
@@ -89,7 +95,9 @@ const AudioSys = {
   alert: function () { this.tone(330, 0.09, 'square', 0.09, 0, 240); this.tone(330, 0.09, 'square', 0.09, 0.14, 240); },
   smash: function () { this.tone(90, 0.3, 'sawtooth', 0.12, 0, 40); this.tone(320, 0.12, 'square', 0.06, 0.02, 80); },
   clear: function () { this.tone(523, 0.12, 'square', 0.07); this.tone(659, 0.12, 'square', 0.07, 0.12); this.tone(784, 0.2, 'square', 0.07, 0.24); },
-  cry: function () { this.tone(392, 0.5, 'triangle', 0.06, 0, 330); this.tone(311, 0.8, 'triangle', 0.06, 0.6, 250); }
+  cry: function () { this.tone(392, 0.5, 'triangle', 0.06, 0, 330); this.tone(311, 0.8, 'triangle', 0.06, 0.6, 250); },
+  /* 出关号角：上行大调琶音（出关是通关，不是碰撞） */
+  victory: function () { this.tone(523, 0.14, 'square', 0.08); this.tone(659, 0.14, 'square', 0.08, 0.13); this.tone(784, 0.14, 'square', 0.08, 0.26); this.tone(1047, 0.42, 'square', 0.09, 0.39); }
 };
 
 /* ---------- 精灵表加载（缺失自动回退代码占位绘制） ---------- */
@@ -124,57 +132,141 @@ const Sprites = {
 };
 
 /* ============================================================
- * LEVELS：数据驱动关卡（叙事骨架）
- * 现为 3 幕 v1。扩展到 8 幕 = 直接往数组里插对象，引擎零改动。
+ * LEVELS：数据驱动关卡（八幕完整剧情 v1.0）
+ * 八幕 = 正德十二年出关始末（史实骨架：《明史·武宗本纪》+《张钦传》+《梁储传》）
+ * 难度曲线（NES 式锯齿）：250 → 270 → 290 → 300 → 240(喘息) → 410(极速) → 320(最密) → 330(终局)
+ * 字段：quotes = title screen「史册」页节录（每幕两条：明史 + 实录）
+ *       tint  = 背景 PNG 之上的半透明色罩（夜色/破晓）
  * ============================================================ */
 const LEVELS = [
   {
     id: 1, act: '第一幕', title: '紫禁城 · 起心动念',
-    before: '正德十二年，秋。\n蒙古小王子屡犯边境，\n紫禁城里的朱厚照坐不住了——\n这一次，他要亲自去看看边关。',
-    after: '《明史 · 武宗本纪》：\n「十二年八月，帝微服如昌平。」\n趁夜出京——没有大臣拦得住\n这位向往战场的皇帝。',
+    before: '正德十二年，秋。\n蒙古小王子屡犯边境，\n紫禁城里的朱厚照坐不住了——\n这一次，他要亲自去看看边关。\n可拦住他的不是蒙古人，\n是满朝的奏折。',
+    after: '《明史 · 武宗本纪》：\n「十二年八月，帝微服如昌平。」\n出京的念头，再也按不住了。',
     scene: 'palace',
     sky: ['#ffd9a0', '#ffab6b'], far: '#9c4f3f', mid: '#c25e43', ground: '#6b4226',
-    speed: 250, interval: [1.7, 2.4], types: ['shiwei', 'zouzhe'], length: 9000,
-    sealAt: [0.45],
-    hint: '点按跳跃 · 拾「大将军印」变身朱寿！',
-    gate: false
+    speed: 250, interval: [1.9, 2.6], types: ['shiwei', 'zouzhe'], length: 5000,
+    sealAt: [],
+    hint: '点按跳跃 · 越过侍卫，别撞飞来的奏折！',
+    gate: false,
+    quotes: [
+      { src: '《明史 · 梁储传》', text: '「帝好微行，尝出西安门，经宿返。储等谏，不听。」' },
+      { src: '《明武宗实录》', text: '「江彬，宣府人，欲挟上自恣，始诱为西北之行。」' }
+    ]
   },
   {
-    id: 2, act: '第二幕', title: '居庸关下 · 负敕印仗剑',
+    id: 2, act: '第二幕', title: '微服昌平 · 夜驰出京',
+    before: '趁夜出京，没有大臣拦得住\n这位向往战场的皇帝。\n他连名字都换了——「朱寿」，\n一个自己封的「大将军」。\n夜路疾驰，居庸关越来越近。',
+    after: '《明史 · 梁储传》：\n「八月朔，微服从数十骑幸昌平。\n次日，储、冕、纪始觉，\n追至沙河不及，连疏请回銮。」',
+    scene: 'road', tint: 'rgba(24,34,78,0.42)',
+    sky: ['#f6c06a', '#d97a4a'], far: '#6f5a6e', mid: '#8d6a5f', ground: '#4e3a2a',
+    speed: 270, interval: [1.6, 2.2], types: ['shiwei', 'zouzhe'], length: 6000,
+    sealAt: [0.4],
+    hint: '拾「大将军印」变身朱寿——无敌撞碎一切！',
+    gate: false,
+    quotes: [
+      { src: '《明史 · 梁储传》', text: '「微服从数十骑幸昌平。储、冕、纪始觉，追至沙河不及。」' },
+      { src: '《明武宗实录》', text: '「八月甲辰朔，上微服从德胜门出幸昌平，外廷犹无知者。」' }
+    ]
+  },
+  {
+    id: 3, act: '第三幕', title: '抵关 · 张钦闭关藏钥',
     before: '居庸关下，巡关御史张钦\n早得密报。他做了两件事：\n闭关门，藏钥匙。\n朱厚照第一次出关，被挡了回去。',
-    after: '《明史 · 张钦传》：\n「钦乃负敕印，仗剑坐关门下曰：\n敢言开关者，斩！」\n皇帝悻悻而回——但没人相信，\n他会就此罢休。',
+    after: '《明史 · 武宗本纪》：\n「己酉，至居庸关，\n巡关御史张钦闭关拒命，乃还。」',
     scene: 'road',
     sky: ['#f6c06a', '#d97a4a'], far: '#6f5a6e', mid: '#8d6a5f', ground: '#4e3a2a',
-    speed: 290, interval: [1.25, 1.9], types: ['shiwei', 'suo', 'zouzhe', 'zhangqin'], length: 11000,
-    sealAt: [0.3, 0.7],
-    hint: '跳过侍卫与「锁」· 别撞飞来的「奏折」！',
-    gate: false
+    speed: 290, interval: [1.4, 2.0], types: ['shiwei', 'suo'], length: 5500,
+    sealAt: [0.6],
+    hint: '「锁」出现了——跳过它！谷大用也会赶来接驾！',
+    gate: false,
+    quotes: [
+      { src: '《明史 · 武宗本纪》', text: '「己酉，至居庸关，巡关御史张钦闭关拒命，乃还。」' },
+      { src: '《明武宗实录》', text: '张钦疏：「臣职守关，陛下即欲出，臣万死不敢奉诏。」' }
+    ]
   },
   {
-    id: 3, act: '第三幕', title: '白羊口 · 疾驰出关',
-    before: '数日后，张钦前往白羊口巡视，\n关防空虚。\n探子飞马来报：\n皇帝的车驾，正朝居庸关疾驰而来！',
+    id: 4, act: '第四幕', title: '关门对峙 · 敢言开关者斩',
+    before: '关门之下，张钦负敕印，\n仗剑坐于门中：\n「敢言开关者，斩！」\n无人敢应——\n皇帝悻悻而回。',
+    after: '第一次出关失败。\n但奏折拦不住、关门拦不住——\n他在等一个关防空虚的日子。',
+    scene: 'pass',
+    sky: ['#f6c06a', '#d97a4a'], far: '#3a3652', mid: '#4d4360', ground: '#2f2a3a',
+    speed: 300, interval: [1.1, 1.6], types: ['shiwei', 'suo', 'zouzhe', 'zhangqin'], length: 6500,
+    sealAt: [0.3, 0.7],
+    hint: '张钦亲自坐镇！跳过他，或引他撞上障碍！',
+    gate: false,
+    quotes: [
+      { src: '《明史 · 张钦传》', text: '「钦乃负敕印，仗剑坐关门下曰：敢言开关者，斩！」' },
+      { src: '《明武宗实录》', text: '「是奏达于朝，上亦不闻也。」' }
+    ]
+  },
+  {
+    id: 5, act: '第五幕', title: '暂退修整 · 奏折如雨',
+    before: '悻悻而回后，\n群臣劝谏的奏折铺天盖地。\n最难拦住他的不是关，\n是奏折。\n——这一幕，忍住，别跳。',
+    after: '《明史 · 梁储传》：\n「储等忧惧，请回銮益急。\n章十余上，帝不为动。」',
+    scene: 'palace',
+    sky: ['#ffd9a0', '#ffab6b'], far: '#9c4f3f', mid: '#c25e43', ground: '#6b4226',
+    speed: 240, interval: [0.9, 1.4], types: ['zouzhe'], length: 5000,
+    sealAt: [],
+    hint: '奏折如雨——这一幕，忍住别跳！',
+    gate: false,
+    quotes: [
+      { src: '《明史 · 梁储传》', text: '「储等忧惧，请回銮益急。章十余上，帝不为动。」' },
+      { src: '《明武宗实录》', text: '「臣等及府部各衙门官俱日诣左顺门跪进章奏，伏请回銮。」' }
+    ]
+  },
+  {
+    id: 6, act: '第六幕', title: '趁虚疾驰 · 白羊口',
+    before: '数日后，张钦前往白羊口巡视，\n关防空虚。\n探子飞马来报：\n皇帝的车驾，\n正朝居庸关疾驰而来！',
+    after: '《明史 · 武宗本纪》：\n「丙寅，夜微服出德胜门，如居庸关。\n辛未，出关，幸宣府。」\n——这一次，没人拦得住他。',
+    scene: 'road', tint: 'rgba(255,140,50,0.22)',
+    sky: ['#f6c06a', '#d97a4a'], far: '#6f5a6e', mid: '#8d6a5f', ground: '#4e3a2a',
+    speed: 410, interval: [1.5, 2.2], types: ['shiwei', 'suo', 'zouzhe', 'zhangqin'], length: 7000,
+    sealAt: [0.5],
+    hint: '极速疾驰！破晓时分，冲向居庸关！',
+    gate: false,
+    quotes: [
+      { src: '《明史 · 武宗本纪》', text: '「丙寅，夜微服出德胜门，如居庸关。辛未，出关，幸宣府。」' },
+      { src: '《明史 · 张钦传》', text: '帝疾驰出关，「数问『御史安在』」——一路狂奔，一路回头。' }
+    ]
+  },
+  {
+    id: 7, act: '第七幕', title: '断后 · 谷大用守关',
+    before: '谷大用奉命守居庸关，\n为皇帝断后、拒追谏诸臣。\n关门，近在眼前。\n——中段的他，会为你护驾。',
+    after: '《明史 · 武宗本纪》：\n「令太监谷大用守关，无纵出者。」\n这一次，守关的太监\n成了皇帝的内应。',
+    scene: 'pass',
+    sky: ['#2d3a5e', '#7a5a72'], far: '#3a3652', mid: '#4d4360', ground: '#2f2a3a',
+    speed: 320, interval: [0.95, 1.4], types: ['shiwei', 'suo', 'zouzhe'], length: 8000,
+    sealAt: [0.85],
+    hint: '障碍最密！谷大用中段登场——碰触他获得护驾！',
+    gate: false,
+    quotes: [
+      { src: '《明史 · 武宗本纪》', text: '「令太监谷大用守关，无纵出者。」' },
+      { src: '《明武宗实录》', text: '「辛未，上度居庸关，遂幸宣府。」' }
+    ]
+  },
+  {
+    id: 8, act: '第八幕', title: '出关 · 痛哭失声',
+    before: '最后一关。\n变身朱寿，撞开关门！\n或由谷大用开门相送——\n而张钦追至关下，\n将痛哭失声。',
     after: '',
     scene: 'pass',
     sky: ['#2d3a5e', '#7a5a72'], far: '#3a3652', mid: '#4d4360', ground: '#2f2a3a',
     speed: 330, interval: [1.0, 1.6], types: ['shiwei', 'suo', 'zouzhe', 'zhangqin'], length: 12000,
-    sealAt: [0.8],
+    sealAt: [0.92],                 // 印贴着关口出：变身 6s 足以裹挟到关门，保证以大将军形态出关
+    compAt: 0.82,                   // 谷大用提前赶到关下候驾（守关放行，史实：谷大用守关纵帝出）
     hint: '疾驰！变身朱寿，撞开关门，出关！',
-    gate: true
+    gate: true,
+    quotes: [
+      { src: '《明史 · 武宗本纪》', text: '「丁未，亲督诸军御之，战五日。辛亥，寇引去，驻跸大同。」' },
+      { src: '《明武宗实录》', text: '「是役也，斩虏首十六级，而我军死者五十二人，乘舆几陷。」' }
+    ]
   }
 ];
 
-/* ------------------------------------------------------------
- * 《八幕规划》—— v1.1 叙事扩展插槽（史实节拍）
- * 加关 = 往 LEVELS 插对象。建议切分：
- *   1 起心动念（紫禁城）        —— 现 L1
- *   2 微服昌平（夜路）          —— 从现 L1 后半拆出，正式引入大将军印
- *   3 抵关 · 张钦闭关藏钥       —— 现 L2 前半，「锁」障碍登场
- *   4 关门对峙 · 敢言开关者斩   —— 现 L2 后半，锁最密
- *   5 暂退修整（奏折如雨）      —— 喘息关：速度慢，但奏折铺天盖地
- *   6 趁虚疾驰（白羊口）        —— 高速关（speed 400+）
- *   7 断后 · 谷大用守关         —— 障碍最密的一关
- *   8 出关 · 痛哭失声+应州大捷  —— 现 L3（终局演出 + 隐藏成就扩展）
- * ------------------------------------------------------------ */
+/* 幕 5 彩蛋：奏折随机挂载的谏言文案（drawZouzhe 漂字） */
+const ZOUZHE_MEMOS = [
+  '臣恳请陛下回銮！', '伏惟陛下珍重圣躬', '章十上，伏乞圣断',
+  '祖宗之法不可废！', '臣等泣血恳谏', '伏阙上书，请罢巡幸'
+];
 
 /* ---------- 无限跑酷模式（背景：居庸关夜色） ---------- */
 const ENDLESS = {
@@ -211,10 +303,19 @@ let gt = 0, last = 0;
 let player, obstacles, items, particles, gate;
 let dist, speed, spawnT, sealT, transformT, hintT, shakeT;
 let usedSeals, gateDone, finaleT, finaleSmashed, finaleCry;
+let outro = false, outroT = 0;          // v1.0.0 出关演出（马里奥式走关）
+let firstObstDone = false;              // 幕 3 首障碍必为「锁」的一次性开关
 let hintText = '';
 let endlessBest = parseInt(store.get('ming_escape_best') || '0', 10) || 0;
 let companion = null, companionSpawnAt = -1, companionUsed = false;
 let uiButtons = [];
+/* v1.0.0 八幕扩关：story 翻页（剧情页/史册页）、菜单选关页、进度解锁 */
+let storyPage = 0;              // story 态：0=剧情页 1=史册页
+let menuPage = 'main';          // menu 态：main=主菜单 levels=选关页
+let unlockedActs = parseInt(store.get('ming_escape_unlocked') || '0', 10) || 0;
+function unlockAct(i) {
+  if (i > unlockedActs) { unlockedActs = i; store.set('ming_escape_unlocked', String(unlockedActs)); }
+}
 
 /* ---------- 画布与自适应布局 ---------- */
 const canvas = document.getElementById('game');
@@ -284,6 +385,8 @@ function resetRun() {
   companion = null;
   companionUsed = false;
   companionSpawnAt = mode === 'endless' ? 1500 + Math.random() * 2000 : -1;
+  outro = false; outroT = 0;
+  firstObstDone = false;
   paused = false;
 }
 
@@ -292,6 +395,7 @@ function startLevel(i) {
   levelIndex = i;
   resetRun();
   hintText = LEVELS[i].hint;
+  storyPage = 0;
   state = 'story';
 }
 
@@ -302,7 +406,7 @@ function startEndless() {
   state = 'play';
 }
 
-function toMenu() { paused = false; state = 'menu'; }
+function toMenu() { paused = false; menuPage = 'main'; state = 'menu'; }
 
 function retry() {
   if (mode === 'level') startLevel(levelIndex);
@@ -349,7 +453,7 @@ window.addEventListener('keydown', function (e) {
     AudioSys.ensure();
     if (state === 'play') {
       if (paused) { paused = false; return; }   // 暂停中按空格 = 继续游戏
-      jump();
+      if (!outro) jump();                        // 出关演出中自动奔跑，不响应跳跃
     } else {
       confirmAction();
     }
@@ -370,14 +474,20 @@ function handleTap(lx, ly) {
     const b = uiButtons[i];
     if (lx >= b.x && lx <= b.x + b.w && ly >= b.y && ly <= b.y + b.h) { b.cb(); return; }
   }
-  if (state === 'play') { if (!paused) jump(); return; }
-  if (state === 'story') { state = 'play'; return; }
+  if (state === 'play') { if (!paused && !outro) jump(); return; }
+  if (state === 'story') {
+    /* 两页翻页：剧情页 → 史册页 → 出关 */
+    if (storyPage === 0) storyPage = 1; else state = 'play';
+    return;
+  }
   if (state === 'finale' && finaleT > 9) { toMenu(); return; }
 }
 
 function confirmAction() {
-  if (state === 'story') state = 'play';
-  else if (state === 'menu') startLevel(0);
+  if (state === 'story') {
+    if (storyPage === 0) storyPage = 1; else state = 'play';
+  }
+  else if (state === 'menu') { if (menuPage === 'main') startLevel(0); }
   else if (state === 'clear') nextLevel();
   else if (state === 'gameover') retry();
   else if (state === 'finale' && finaleT > 9) toMenu();
@@ -397,7 +507,32 @@ function spawnObstacle() {
     types = types.filter(function (t) { return t !== 'zhangqin'; });
   }
   const type = types[Math.floor(Math.random() * types.length)];
-  obstacles.push({ type: type, x: VW + 50, t: 0, dead: false, chasing: false, chaseT: 0, cool: 0 });
+  /* v1.0.0 幕 3 教学点：本幕第一个障碍必为「锁」（hint 里教的正是它） */
+  let firstType = type;
+  if (mode === 'level' && !firstObstDone) {
+    firstObstDone = true;
+    if (levelIndex === 2) firstType = 'suo';
+  }
+  /* v1.0.0 幕 5 彩蛋：奏折随机挂谏言文案 */
+  const memo = (firstType === 'zouzhe' && mode === 'level' && levelIndex === 4)
+    ? ZOUZHE_MEMOS[Math.floor(Math.random() * ZOUZHE_MEMOS.length)] : null;
+  const ob = { type: firstType, x: VW + 50, t: 0, dead: false, chasing: false, chaseT: 0, cool: 0, memo: memo };
+  /* v1.0.0 幕 5「奏折雨」：一半奏折从高空掉落——落地成路障（影子预警，引玩家跳过），
+     与贴地飞行的奏折（不能跳）形成上下夹击，把「奏折如雨」具象化 */
+  if (firstType === 'zouzhe' && mode === 'level' && levelIndex === 4 && Math.random() < 0.5) {
+    ob.fall = true;
+    ob.fy = G - 250 - Math.random() * 60;   // 当前高度（动态）
+    ob.vy = 0;
+    ob.landed = false;
+  }
+  obstacles.push(ob);
+}
+
+/* 障碍当前纵向位置：掉落型奏折用动态 fy，其余按 fly/地面固定 */
+function obstY(o) {
+  const d = OBST_DEF[o.type];
+  if (o.fall) return o.fy;
+  return d.fly ? G - FLY_OBST_OFFSET : G - d.h;
 }
 
 /* rel：相对地面线 G 的负偏移（旋转屏幕后自动跟随） */
@@ -414,6 +549,17 @@ function updatePlay(dt) {
   else baseSpeed = lv.speed;
   speed = baseSpeed * SF * (transformT > 0 ? 1.15 : 1);
 
+  /* 出关演出：世界继续滚动，玩家驰出门洞；变身形态冻结；数秒后进终章字幕 */
+  if (outro) {
+    outroT += dt;
+    if (transformT > 0) transformT = Math.max(transformT, 0.5);
+    if (outroT > 2.8) {
+      outro = false;
+      companion = null;
+      state = 'finale';
+      finaleT = 0;
+    }
+  }
   player.animT += dt;
   if (!player.onGround) {
     player.vy += GRAVITY * dt;
@@ -454,19 +600,21 @@ function updatePlay(dt) {
     if (!nearGate) spawnObstacle();
   }
 
-  /* 随机大将军印 */
+  /* 随机大将军印：仅无限模式。关卡模式的印一律走 sealAt 剧情印——
+     教学节奏必须可控（幕 1 纯教学无印、幕 5 奏折关无印），不允许随机补印 */
   sealT -= dt;
   if (sealT <= 0) {
     sealT = 9 + Math.random() * 5;
-    if (transformT <= 0) spawnSeal(VW + 40, -(59 - Math.random() * 12));
+    if (mode === 'endless' && transformT <= 0) spawnSeal(VW + 40, -(59 - Math.random() * 12));
   }
-  /* 剧情保证印（按关卡进度比例触发，确保关键演出必有变身） */
+  /* 剧情保证印（按关卡进度比例触发，确保关键演出必有变身）
+     关卡（gate:true）的印贴地摆放（rel -34），奔跑路径上直接拾取，不可能错过 */
   if (mode === 'level' && lv.sealAt) {
     for (let i = 0; i < lv.sealAt.length; i++) {
       const p = lv.sealAt[i];
       if (dist >= lv.length * p && usedSeals.indexOf(p) < 0) {
         usedSeals.push(p);
-        spawnSeal(VW + 40, -54);
+        spawnSeal(VW + 40, lv.gate ? -34 : -54);
       }
     }
   }
@@ -480,6 +628,17 @@ function updatePlay(dt) {
   for (let i = 0; i < obstacles.length; i++) {
     const o = obstacles[i];
     o.x -= mv; o.t += dt;
+    /* v1.0.0 幕 5 掉落型奏折：加速下坠，落地成路障（扬尘提示） */
+    if (o.fall && !o.landed) {
+      o.vy += 1400 * dt;
+      o.fy += o.vy * dt;
+      if (o.fy >= G - OBST_DEF.zouzhe.h) {
+        o.fy = G - OBST_DEF.zouzhe.h;
+        o.landed = true;
+        burst(o.x + 12, G - 2, 5, '#d8cba8');
+        AudioSys.hit();
+      }
+    }
     if (o.type === 'zhangqin') {
       if (o.chasing) {
         if (transformT > 0) {
@@ -515,7 +674,7 @@ function updatePlay(dt) {
     for (let j = 0; j < obstacles.length; j++) {
       if (j === i) continue;
       const b = obstacles[j], bd = OBST_DEF[b.type];
-      const boy = bd.fly ? G - FLY_OBST_OFFSET : G - bd.h;
+      const boy = obstY(b);
       if (rectsOverlap(abox, { x: b.x + 2, y: boy + 2, w: bd.w - 4, h: bd.h - 4 })) {
         a.dead = true;
         burst(a.x + ad.w / 2, G - ad.h / 2, 14, '#e0705a');
@@ -551,7 +710,7 @@ function updatePlay(dt) {
   for (let i = 0; i < obstacles.length; i++) {
     const o = obstacles[i];
     const d = OBST_DEF[o.type];
-    const oy = d.fly ? G - FLY_OBST_OFFSET : G - d.h;
+    const oy = obstY(o);
     const obox = { x: o.x + 2, y: oy + 2, w: d.w - 4, h: d.h - 4 };
     if (rectsOverlap(pr, obox)) {
       if (o.type === 'zhangqin' && o.shaken) {
@@ -598,13 +757,15 @@ function updatePlay(dt) {
   obstacles = obstacles.filter(function (o) { return !o.dead; });
 
   /* ---------- 谷大用（ companion 护驾） ----------
-   * 规则：第二关起、关卡中段（45%）从右侧入画；无限模式随机出现。
+   * 规则：幕 3 起、关卡中段（默认 45%，可用 lv.compAt 覆写）从右侧入画；无限模式随机出现。
    * 玩家碰触后跟随（同步跳跃），直到关卡结束 / 终局 / 玩家未变身时
    * 撞上障碍物——由谷大用替陛下挡下一次，护驾即解除。
    * 变身朱寿（无敌）时撞碎障碍物不算，护驾不受变身影响。 */
-  if (mode === 'level' && levelIndex >= 1 && !companion && !companionUsed && dist >= lv.length * 0.45) {
+  if (mode === 'level' && levelIndex >= 2 && !companion && !companionUsed && dist >= lv.length * (lv.compAt || 0.45)) {
     companion = { x: VW + 40, y: G - COMP_H, vy: 0, onGround: true, following: false, animT: 0 };
     companionUsed = true;                              // 关卡模式每幕只登场一次：错过/护驾消耗后不再刷新
+    hintText = '谷大用赶来接驾——碰触他获得护驾！'; hintT = 2.5;
+    AudioSys.alert();
   }
   if (mode === 'endless' && !companion && dist >= companionSpawnAt) {
     companion = { x: VW + 40, y: G - COMP_H, vy: 0, onGround: true, following: false, animT: 0 };
@@ -640,27 +801,37 @@ function updatePlay(dt) {
     }
   }
 
-  /* 关门判定：变身朱寿=撞碎门（隐藏成就）；否则谷大用开门 */
+  /* 关门判定 → 出关演出（outro）：变身朱寿=撞碎门（隐藏成就）；否则谷大用开门放行。
+     音效用出关号角（victory）而非碰撞声——这不是撞墙，是通关。
+     演出：清场（守军望驾而退）→ 世界继续滚动、玩家自动驰出门洞 → 数秒后进终章字幕 */
   if (gate && !gateDone && gate.x <= PLAYER_X + PLAYER_W) {
     gateDone = true;
+    unlockAct(levelIndex + 1);
     if (transformT > 0) {
       finaleSmashed = true;
       gate.broken = true;
       shakeT = 0.6;
       burst(gate.x + 20, G - 70, 30, '#e7c26a');
       burst(gate.x + 50, G - 40, 20, '#8a6a4a');
-      AudioSys.smash();
     } else {
       gate.opened = true;
+      burst(gate.x + 48, G - 40, 18, '#e7c26a');
     }
-    companion = null;
-    state = 'finale';
-    finaleT = 0;
+    AudioSys.victory();
+    /* 守军望驾而退：清空障碍与道具（带粒子退场），出关路上不再有任何威胁 */
+    for (let i = 0; i < obstacles.length; i++) {
+      if (obstacles[i].type !== 'zhangqin') burst(obstacles[i].x + 10, G - 20, 3, '#b8a890');
+    }
+    obstacles = [];
+    items = [];
+    outro = true;
+    outroT = 0;
     return;
   }
 
   /* 普通关完成 */
   if (mode === 'level' && !lv.gate && dist >= lv.length) {
+    unlockAct(levelIndex + 1);
     companion = null;
     AudioSys.clear();
     state = 'clear';
@@ -855,6 +1026,11 @@ function drawBackground(lv) {
   else if (lv.scene === 'road') bgRoad(lv);
   else bgPass(lv);
   drawGround(lv);
+  /* v1.0.0：夜色/破晓色罩（叠在 AI 背景 PNG 与地面之上，实体绘制之前） */
+  if (lv.tint) {
+    ctx.fillStyle = lv.tint;
+    ctx.fillRect(0, 0, VW, VH);
+  }
 }
 
 /* ---------- 实体绘制 ---------- */
@@ -940,8 +1116,19 @@ function drawSuo(x, y) {
   ctx.fillStyle = '#d4a017';
   ctx.fillRect(x + 8, y + 11, 2, 4);
 }
-function drawZouzhe(x, y, t) {
-  const wob = Math.sin(t * 6) * 0.15;
+function drawZouzhe(x, y, t, o) {
+  /* 幕 5 彩蛋：谏言小字（深色底条 + 加大加亮，保证可读） */
+  if (o && o.memo) {
+    ctx.font = 'bold 10px sans-serif';
+    const tw = ctx.measureText(o.memo).width;
+    ctx.fillStyle = 'rgba(24,18,30,0.78)';
+    ctx.fillRect(x + 12 - tw / 2 - 5, y - 21, tw + 10, 14);
+    ctx.fillStyle = '#ffe9a8';
+    ctx.textAlign = 'center';
+    ctx.fillText(o.memo, x + 12, y - 10);
+  }
+  /* 掉落型：快速翻滚；飞行型：轻微摇摆 */
+  const wob = (o && o.fall && !o.landed) ? o.t * 9 : Math.sin(t * 6) * 0.15;
   ctx.save();
   ctx.translate(x + 12, y + 7);
   ctx.rotate(wob);
@@ -956,11 +1143,18 @@ function drawObstacles() {
   for (let i = 0; i < obstacles.length; i++) {
     const o = obstacles[i];
     const d = OBST_DEF[o.type];
-    const oy = d.fly ? G - FLY_OBST_OFFSET : G - d.h;
+    const oy = obstY(o);
+    /* 掉落型奏折：地面落点影子预警（引玩家提前起跳） */
+    if (o.fall && !o.landed) {
+      ctx.fillStyle = 'rgba(10,8,14,0.30)';
+      ctx.beginPath();
+      ctx.ellipse(o.x + 12, G - 2, 12, 3.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
     if (o.type === 'zhangqin') drawZhangqin(o.x, oy, o.t, o);
     else if (o.type === 'shiwei') drawShiwei(o.x, oy, o.t);
     else if (o.type === 'suo') drawSuo(o.x, oy);
-    else drawZouzhe(o.x, oy, o.t);
+    else drawZouzhe(o.x, oy, o.t, o);
   }
 }
 function drawSealItem(it) {
@@ -1230,23 +1424,50 @@ function drawStoryOverlay() {
   ctx.fillStyle = 'rgba(8,10,18,0.72)';
   ctx.fillRect(0, 0, VW, VH);
   ctx.textAlign = 'center';
-  const yAct = portrait ? 90 : 62;
-  const yTitle = portrait ? 122 : 88;
-  const yText = portrait ? 165 : 120;
-  const lh = portrait ? 20 : 18;
-  ctx.fillStyle = '#ffd76a';
-  ctx.font = 'bold 12px sans-serif';
-  ctx.fillText(lv.act, VW / 2, yAct);
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 18px sans-serif';
-  ctx.fillText(lv.title, VW / 2, yTitle);
-  ctx.fillStyle = '#e8e4d8';
-  ctx.font = '11px sans-serif';
-  wrapText(lv.before, VW / 2, yText, VW - 40, lh);
-  if (Math.floor(gt * 2) % 2) {
-    ctx.fillStyle = '#9a9ab0';
-    ctx.font = '10px sans-serif';
-    ctx.fillText('—— 点按任意处，开始 ——', VW / 2, VH - 46);
+  if (storyPage === 0) {
+    /* 页 1：剧情 */
+    const yAct = portrait ? 90 : 62;
+    const yTitle = portrait ? 122 : 88;
+    const yText = portrait ? 165 : 120;
+    const lh = portrait ? 20 : 18;
+    ctx.fillStyle = '#ffd76a';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillText(lv.act, VW / 2, yAct);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 18px sans-serif';
+    ctx.fillText(lv.title, VW / 2, yTitle);
+    ctx.fillStyle = '#e8e4d8';
+    ctx.font = '11px sans-serif';
+    wrapText(lv.before, VW / 2, yText, VW - 40, lh);
+    if (Math.floor(gt * 2) % 2) {
+      ctx.fillStyle = '#9a9ab0';
+      ctx.font = '10px sans-serif';
+      ctx.fillText('—— 点按任意处，翻页 ——', VW / 2, VH - 46);
+    }
+  } else {
+    /* 页 2：史册（文献节录，明史 + 实录双源） */
+    const yAct = portrait ? 80 : 56;
+    ctx.fillStyle = '#ffd76a';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillText('—— 史 册 ——', VW / 2, yAct);
+    ctx.fillStyle = '#8a86a0';
+    ctx.font = '9px sans-serif';
+    ctx.fillText(lv.act + ' · ' + lv.title, VW / 2, yAct + 18);
+    let yy = yAct + (portrait ? 58 : 42);
+    for (let q = 0; q < lv.quotes.length; q++) {
+      const qu = lv.quotes[q];
+      ctx.fillStyle = '#c8a04a';
+      ctx.font = 'bold 8px sans-serif';
+      ctx.fillText(qu.src, VW / 2, yy);
+      ctx.fillStyle = '#e8e4d8';
+      ctx.font = '10px sans-serif';
+      yy = wrapText(qu.text, VW / 2, yy + 15, VW - 56, 15) + 14;
+    }
+    if (Math.floor(gt * 2) % 2) {
+      ctx.fillStyle = '#9a9ab0';
+      ctx.font = '10px sans-serif';
+      ctx.fillText('—— 点按任意处，出发 ——', VW / 2, VH - 46);
+    }
   }
 }
 function drawClearOverlay() {
@@ -1331,10 +1552,12 @@ function drawFinale() {
     ctx.font = '9px sans-serif';
     ctx.fillText('巡关御史 · 张钦', VW / 2, 246);
   } else {
-    drawCryingZhangqin(330, 170);
+    /* 横屏：立绘放字幕文字块右侧、与其垂直对齐（字幕居中 x=180，右缘最坏 ~330；
+     * 立绘底部 y124、标签 y138，远离按钮行 y218——v1.0.0-r4 自右上角左移贴字） */
+    drawCryingZhangqin(336, 76);
     ctx.fillStyle = '#8a86a0';
     ctx.font = '9px sans-serif';
-    ctx.fillText('巡关御史 · 张钦', 354, 232);
+    ctx.fillText('巡关御史 · 张钦', 360, 138);
   }
 
   /* 字幕（按时间顺序切换） */
@@ -1343,7 +1566,7 @@ function drawFinale() {
   let subColor = '#e8e4d8';
   let subBold = true;
   if (finaleT > 8.6) {
-    sub = '你，成功出关！\n（八幕完整篇章，敬请期待）';
+    sub = '你，成功出关！\n十月，应州之战，亲冒矢石——\n自此边境安定十余年。';
     subSize = 13;
     subColor = '#ffd76a';
   } else if (finaleT > 6.4) {
@@ -1354,7 +1577,8 @@ function drawFinale() {
       sub = '谷大用奉命代守关门。\n张钦，永远慢了一步。';
     }
   } else if (finaleT > 4.2) {
-    sub = '「负敕印，仗剑坐关门者，\n终究没能拦住他的皇帝。」\n——《明史 · 张钦传》';
+    /* 引文为《明史 · 张钦传》原文（已核对：「钦闻，追之，已不及」「钦感愤，西望痛哭」） */
+    sub = '「钦闻，追之，已不及。」\n「钦感愤，西望痛哭。」\n——《明史 · 张钦传》';
     subSize = 10;
     subColor = '#b8b4c8';
     subBold = false;
@@ -1368,6 +1592,14 @@ function drawFinale() {
     ctx.font = (subBold ? 'bold ' : '') + subSize + 'px sans-serif';
     if (portrait) wrapText(sub, VW / 2, 300, VW - 30, subSize + 8);
     else wrapText(sub, VW / 2 - 60, 84, 300, subSize + 6);
+  }
+  /* v1.0.0 终章实录节录：仅保留《明武宗实录》一手史料（原文已核对卷154：
+     「是役也，斩虏首十六级，而我军死者五十二人」） */
+  if (finaleT > 11) {
+    ctx.fillStyle = '#b8b4c8';
+    ctx.font = '9px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('「是役也，斩虏首十六级。」——《明武宗实录》', VW / 2, portrait ? 364 : 170);
   }
   if (finaleT > 9) {
     const yBtn = portrait ? VH - 70 : VH - 52;
@@ -1388,14 +1620,59 @@ function drawMenu() {
   ctx.fillText('朱厚照出居庸关', VW / 2, portrait ? 158 : 84);
   ctx.fillStyle = '#b8b4c8';
   ctx.font = '10px sans-serif';
-  ctx.fillText('一场说走就走的出走', VW / 2, portrait ? 184 : 104);
-  button(VW / 2 - 90, portrait ? 240 : 128, 180, 30, '出关记 · 关卡模式（三幕）', function () { startLevel(0); }, true);
+  ctx.fillText('一场说走就走的出走 · 八幕完整篇章', VW / 2, portrait ? 184 : 104);
+  button(VW / 2 - 90, portrait ? 240 : 128, 180, 30, '出关记 · 八幕选关', function () { menuPage = 'levels'; }, true);
   button(VW / 2 - 90, portrait ? 285 : 168, 180, 30, '居庸关 · 无限跑酷', startEndless, false);
   ctx.fillStyle = '#8a86a0';
   ctx.font = '9px sans-serif';
-  ctx.fillText('史料：《明史 · 张钦传》《明史 · 武宗本纪》', VW / 2, portrait ? 400 : 216);
+  ctx.fillText('史料：《明史 · 张钦传》《明史 · 武宗本纪》《明武宗实录》', VW / 2, portrait ? 400 : 216);
   ctx.fillStyle = '#6a6680';
   ctx.fillText('点按或空格跳跃 · 拾取大将军印可变身朱寿', VW / 2, portrait ? 420 : 230);
+}
+
+/* v1.0.0 选关页：通关一幕解锁下一幕（unlockedActs 持久化于 localStorage） */
+function drawLevelSelect() {
+  drawBackground(MENU_BG);
+  ctx.fillStyle = 'rgba(8,10,18,0.5)';
+  ctx.fillRect(0, 0, VW, VH);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffd76a';
+  ctx.font = 'bold 15px sans-serif';
+  ctx.fillText('出关记 · 选幕', VW / 2, portrait ? 66 : 42);
+  ctx.fillStyle = '#8a86a0';
+  ctx.font = '9px sans-serif';
+  ctx.fillText('通关一幕，解锁下一幕 · 已解锁 ' + Math.min(8, unlockedActs + 1) + ' / 8', VW / 2, portrait ? 84 : 58);
+  const bw = 58, bh = 44, gx = 6, gy = 10;
+  const x0 = (VW - (bw * 4 + gx * 3)) / 2;
+  const y0 = portrait ? 108 : 72;
+  for (let i = 0; i < 8; i++) {
+    const col = i % 4, row = Math.floor(i / 4);
+    const x = x0 + col * (bw + gx);
+    const y = y0 + row * (bh + gy);
+    if (i <= unlockedActs) {
+      const lv = LEVELS[i];
+      button(x, y, bw, bh, '第' + (i + 1) + '幕', function () { startLevel(i); }, true);
+      ctx.fillStyle = '#e8d8b0';
+      ctx.font = '7px sans-serif';
+      ctx.textAlign = 'center';
+      /* 幕名两行截取（首 6 字） */
+      const nm = lv.title.split(' · ')[0];
+      ctx.fillText(nm.length > 6 ? nm.slice(0, 6) : nm, x + bw / 2, y + bh - 6);
+    } else {
+      ctx.fillStyle = 'rgba(20,24,34,0.7)';
+      ctx.fillRect(x, y, bw, bh);
+      ctx.strokeStyle = '#4a4658';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x + 0.5, y + 0.5, bw - 1, bh - 1);
+      ctx.fillStyle = '#6a6680';
+      ctx.font = 'bold 11px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('第' + (i + 1) + '幕', x + bw / 2, y + bh / 2 - 2);
+      ctx.font = '8px sans-serif';
+      ctx.fillText('未解锁', x + bw / 2, y + bh / 2 + 12);
+    }
+  }
+  button(VW / 2 - 70, portrait ? VH - 92 : VH - 58, 140, 28, '◀ 返回', function () { menuPage = 'main'; }, false);
 }
 
 /* ---------- 总渲染 ---------- */
@@ -1404,7 +1681,8 @@ function render() {
   ctx.setTransform(PIXEL_SCALE, 0, 0, PIXEL_SCALE, 0, 0);
   ctx.imageSmoothingEnabled = false;
   if (state === 'menu') {
-    drawMenu();
+    if (menuPage === 'levels') drawLevelSelect();
+    else drawMenu();
     return;
   }
   const bg = mode === 'level' ? LEVELS[levelIndex] : ENDLESS;
@@ -1423,6 +1701,19 @@ function render() {
   }
   ctx.restore();
   drawHUD();
+  /* v1.0.0 出关演出横幅：「出关」金字渐显渐隐 */
+  if (outro) {
+    const a = outroT < 0.4 ? outroT / 0.4 : (outroT > 2.2 ? Math.max(0, 1 - (outroT - 2.2) / 0.6) : 1);
+    ctx.globalAlpha = a;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffd76a';
+    ctx.font = 'bold 32px sans-serif';
+    ctx.fillText('出 关', VW / 2, portrait ? 130 : 104);
+    ctx.fillStyle = '#e8e4d8';
+    ctx.font = '11px sans-serif';
+    ctx.fillText('居庸关外，天高海阔', VW / 2, (portrait ? 130 : 104) + 26);
+    ctx.globalAlpha = 1;
+  }
   if (state === 'story') drawStoryOverlay();
   else if (state === 'clear') drawClearOverlay();
   else if (state === 'gameover') drawGameOverOverlay();
