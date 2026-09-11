@@ -207,7 +207,7 @@ const LEVELS = [
     sky: ['#ffd9a0', '#ffab6b'], far: '#9c4f3f', mid: '#c25e43', ground: '#6b4226',
     speed: 240, interval: [0.9, 1.4], types: ['zouzhe'], length: 5000,
     sealAt: [],
-    hint: '奏折如雨——这一幕，忍住别跳！',
+    hint: '小心奏折雨——这一幕，折子会从天上掉下来！',
     gate: false,
     quotes: [
       { src: '《明史 · 梁储传》', text: '「储等忧惧，请回銮益急。章十余上，帝不为动。」' },
@@ -352,11 +352,23 @@ function rectsOverlap(a, b) {
 }
 function fmtLi(px) { return Math.floor(px / PX_PER_LI); }
 function wrapText(text, x, y, maxW, lh) {
-  const lines = String(text).split('\n');
+  /* 先按手动 \n 分段，再按实际宽度自动断行（中文无空格，逐字贪心断行），
+     防止竖屏长引文水平溢出屏幕 */
+  const paras = String(text).split('\n');
   let yy = y;
-  for (let i = 0; i < lines.length; i++) {
-    ctx.fillText(lines[i], x, yy);
-    yy += lh;
+  for (let p = 0; p < paras.length; p++) {
+    let line = '';
+    for (let i = 0; i < paras[p].length; i++) {
+      const test = line + paras[p][i];
+      if (line && ctx.measureText(test).width > maxW) {
+        ctx.fillText(line, x, yy);
+        yy += lh;
+        line = paras[p][i];
+      } else {
+        line = test;
+      }
+    }
+    if (line) { ctx.fillText(line, x, yy); yy += lh; }
   }
   return yy;
 }
