@@ -147,7 +147,7 @@ const LEVELS = [
     sky: ['#ffd9a0', '#ffab6b'], far: '#9c4f3f', mid: '#c25e43', ground: '#6b4226',
     speed: 250, interval: [1.9, 2.6], types: ['shiwei', 'zouzhe'], length: 5000,
     sealAt: [],
-    hint: '点按跳跃 · 越过侍卫，别撞飞来的奏折！',
+    hint: '前两个侍卫：看到「现在起跳！」再跳（长按更高）；奏折：不好跳——别跳，跑过去！',
     gate: false,
     quotes: [
       { src: '《明史 · 梁储传》', text: '「帝好微行，尝出西安门，经宿返。储等谏，不听。」' },
@@ -289,7 +289,7 @@ const MENU_BG = {
 /* ---------- 障碍物定义 ---------- */
 const OBST_DEF = {
   shiwei: { w: 26, h: 44, fly: false },       // 守关侍卫（地面 · 跳过他）
-  suo: { w: 18, h: 18, fly: false },          // 侍卫掷出的锁（地面 · 跳过）
+  suo: { w: 28, h: 20, fly: false },          // 侍卫掷出的锁（明代横式广锁 · 地面 · 跳过）
   zouzhe: { w: 24, h: 14, fly: true },        // 飞来的奏折（空中 · 千万别跳）
   zhangqin: { w: 30, h: 48, fly: false }      // 追击型 BOSS：巡关御史张钦（巡逻→追击，不会跳跃）
 };
@@ -304,8 +304,14 @@ let player, obstacles, items, particles, gate;
 let dist, speed, spawnT, sealT, transformT, hintT, shakeT;
 let usedSeals, gateDone, finaleT, finaleSmashed, finaleCry;
 let outro = false, outroT = 0;          // v1.0.0 出关演出（马里奥式走关）
+let outroNext = 'finale';               // 演出去向：幕8='finale' 终章字幕；其余幕='clear' 结算页（v1.0.3 各幕均有驰出演出，不再瞬间冻结）
+let jumpCueStage = 0;                   // v1.0.3 幕1 教学：0=无 1=预备（长按教学） 2=现在起跳 3=本局已完成
+let jumpCuePassed = 0;                  // v1.0.3 幕1：已过身侍卫计数（教满前 2 个侍卫后收课）
+let zouzheCueStage = 0;                 // v1.0.3 幕1 教学：0=无 2=「不好跳」提示中 3=已完成（奏折：别跳跑过去）
+let spawnCount = 0;                     // v1.0.3 幕1 教学脚本计数（第1、2障碍=侍卫、第3=奏折）
 let firstObstDone = false;              // 幕 3 首障碍必为「锁」的一次性开关
 let hintText = '';
+let hintStory = false;   // v1.0.3 提示双通道：剧情播报（true）不受提示开关屏蔽，教学提示（false）受 hintsOn 控制
 let endlessBest = parseInt(store.get('ming_escape_best') || '0', 10) || 0;
 let companion = null, companionSpawnAt = -1, companionUsed = false;
 let uiButtons = [];
@@ -313,6 +319,9 @@ let uiButtons = [];
 let storyPage = 0;              // story 态：0=剧情页 1=史册页
 let menuPage = 'main';          // menu 态：main=主菜单 levels=选关页
 let unlockedActs = parseInt(store.get('ming_escape_unlocked') || '0', 10) || 0;
+let hintsOn = store.get('ming_escape_hints') !== '0';   // v1.0.3 游戏提示开关（默认开，localStorage 持久化）
+let tutorUsed = false;          // v1.0.3 幕1教学：首个地面障碍挂起跳提示标（每跑一次）
+let assist = false;             // v1.0.3 幕1辅助模式（本幕累计死亡≥3次自动开启，节奏放慢）
 function unlockAct(i) {
   if (i > unlockedActs) { unlockedActs = i; store.set('ming_escape_unlocked', String(unlockedActs)); }
 }
@@ -377,7 +386,7 @@ function wrapText(text, x, y, maxW, lh) {
 function currentLevel() { return mode === 'level' ? LEVELS[levelIndex] : null; }
 
 function resetRun() {
-  player = { y: G - PLAYER_H, vy: 0, onGround: true, form: 'zhuhouzhao', animT: 0 };
+  player = { y: G - PLAYER_H, vy: 0, onGround: true, form: 'zhuhouzhao', animT: 0, landT: 0 };
   obstacles = [];
   items = [];
   particles = [];
@@ -399,6 +408,11 @@ function resetRun() {
   companionSpawnAt = mode === 'endless' ? 1500 + Math.random() * 2000 : -1;
   outro = false; outroT = 0;
   firstObstDone = false;
+  tutorUsed = false;
+  jumpCueStage = 0;
+  jumpCuePassed = 0;
+  zouzheCueStage = 0;
+  spawnCount = 0;
   paused = false;
 }
 
@@ -406,15 +420,19 @@ function startLevel(i) {
   mode = 'level';
   levelIndex = i;
   resetRun();
-  hintText = LEVELS[i].hint;
+  hintText = LEVELS[i].hint; hintStory = (i !== 0);   // 幕1开场=基本操作教学（可屏蔽）；幕2-8开场=剧情导览（不屏蔽）
+  /* v1.0.3 幕1辅助：本幕累计死亡≥3次自动开启（隐性防卡关，不改变判定只放慢节奏） */
+  assist = (i === 0 && (parseInt(store.get('ming_escape_a1dies') || '0', 10) || 0) >= 3);
+  if (assist) hintText = '辅助模式：节奏放慢 15% —— 长按跳得更高，看到「跳！」再起跳！'; hintStory = true;
   storyPage = 0;
   state = 'story';
 }
 
 function startEndless() {
   mode = 'endless';
+  assist = false;
   resetRun();
-  hintText = '点按跳跃 · 拾「大将军印」变身朱寿！';
+  hintText = '点按跳跃 · 拾「大将军印」变身朱寿！'; hintStory = true;
   state = 'play';
 }
 
@@ -436,12 +454,16 @@ function jump() {
   if (player.onGround) {
     player.onGround = false;
     player.vy = JUMP_V;
+    player.takeoffT = 0.07;          // wip16 起跳蹬伸窗口（约4帧，快速衰减，只此一段形变）
+    player.cut = false;
     AudioSys.jump();
     dust(PLAYER_X + PLAYER_W / 2, G, 4);
   }
 }
 function releaseJump() {
-  if (state === 'play' && !player.onGround && player.vy < JUMP_CUT) player.vy = JUMP_CUT;
+  /* wip16：松手不再瞬间把 vy 拍到 JUMP_CUT（那一下就是「半空被拽住」），
+     改为打标记，物理更新里按指数衰减平滑滑向 JUMP_CUT */
+  if (state === 'play' && !player.onGround && player.vy < JUMP_CUT) player.cut = true;
 }
 
 canvas.addEventListener('pointerdown', function (e) {
@@ -478,6 +500,10 @@ window.addEventListener('keyup', function (e) {
 function togglePause() {
   if (state !== 'play') return;
   paused = !paused;
+}
+function toggleHints() {   // v1.0.3 游戏提示开关：教学底条 + HUD 提示条一并屏蔽，偏好持久化
+  hintsOn = !hintsOn;
+  store.set('ming_escape_hints', hintsOn ? '1' : '0');
 }
 
 function handleTap(lx, ly) {
@@ -519,16 +545,32 @@ function spawnObstacle() {
     types = types.filter(function (t) { return t !== 'zhangqin'; });
   }
   const type = types[Math.floor(Math.random() * types.length)];
-  /* v1.0.0 幕 3 教学点：本幕第一个障碍必为「锁」（hint 里教的正是它） */
+  /* v1.0.0 幕 3 教学点：本幕第一个障碍必为「锁」（hint 里教的正是它）
+     v1.0.3 幕 4 教学点：本幕第一个障碍必为「张钦」并挂教学标（教「跳过他或引他撞障碍」） */
   let firstType = type;
+  let isTutorZq = false;
   if (mode === 'level' && !firstObstDone) {
     firstObstDone = true;
     if (levelIndex === 2) firstType = 'suo';
+    else if (levelIndex === 3) { firstType = 'zhangqin'; isTutorZq = true; }
+  }
+  /* v1.0.3 幕 1 教学脚本：第 1、2 个障碍=侍卫（各配起跳提示）、第 3 个=奏折（配「不好跳」提示），其余随机。
+     spawnCount 先自增再判断——保证每次开启第一关顺序恒定（此前判断在自增前导致首障碍随机） */
+  spawnCount++;
+  if (mode === 'level' && levelIndex === 0) {
+    if (spawnCount <= 2) firstType = 'shiwei';
+    else if (spawnCount === 3) firstType = 'zouzhe';
   }
   /* v1.0.0 幕 5 彩蛋：奏折随机挂谏言文案 */
   const memo = (firstType === 'zouzhe' && mode === 'level' && levelIndex === 4)
     ? ZOUZHE_MEMOS[Math.floor(Math.random() * ZOUZHE_MEMOS.length)] : null;
-  const ob = { type: firstType, x: VW + 50, t: 0, dead: false, chasing: false, chaseT: 0, cool: 0, memo: memo };
+  const ob = { type: firstType, x: VW + 50, t: 0, dead: false, chasing: false, chaseT: 0, cool: 0, memo: memo, tutor: isTutorZq };
+  /* v1.0.3 幕1教学：本跑首个「地面」障碍（侍卫）挂起跳提示标——
+     奏折是飞行障碍（不能跳），提示必须出现在玩家遇到的第一个地上障碍上 */
+  if (mode === 'level' && levelIndex === 0 && !tutorUsed && firstType === 'shiwei') {
+    ob.tutor = true;
+    tutorUsed = true;
+  }
   /* v1.0.0 幕 5「奏折雨」：一半奏折从高空掉落——落地成路障（影子预警，引玩家跳过），
      与贴地飞行的奏折（不能跳）形成上下夹击，把「奏折如雨」具象化 */
   if (firstType === 'zouzhe' && mode === 'level' && levelIndex === 4 && Math.random() < 0.5) {
@@ -558,28 +600,42 @@ function updatePlay(dt) {
   const SF = portrait ? PORTRAIT_SPEED : 1.0;
   let baseSpeed;
   if (mode === 'endless') baseSpeed = 280 + Math.min(240, dist / 60);
-  else baseSpeed = lv.speed;
+  else baseSpeed = lv.speed * (assist ? 0.85 : 1);   // v1.0.3 幕1辅助：死亡≥3次放慢 15%
   speed = baseSpeed * SF * (transformT > 0 ? 1.15 : 1);
 
   /* 出关演出：世界继续滚动，玩家驰出门洞；变身形态冻结；数秒后进终章字幕 */
   if (outro) {
     outroT += dt;
     if (transformT > 0) transformT = Math.max(transformT, 0.5);
-    if (outroT > 2.8) {
+    if (outroT > (outroNext === 'clear' ? 2.4 : 2.8)) {
       outro = false;
-      companion = null;
-      state = 'finale';
-      finaleT = 0;
+      if (outroNext === 'clear') {
+        AudioSys.clear();
+        state = 'clear';          // 谷大用留在结算页背景（v1.0.3：幕终不消失，仅摘「护驾」标）
+      } else {
+        companion = null;         // 幕8 终章字幕为独立画面，随演出结束退场
+        state = 'finale';
+        finaleT = 0;
+      }
     }
   }
   player.animT += dt;
+  if (player.landT > 0) player.landT -= dt;
+  if (player.takeoffT > 0) player.takeoffT -= dt;
   if (!player.onGround) {
+    /* wip16 截跳平滑衰减：约 70ms 时间常数滑向 JUMP_CUT，到值即止；
+       期间重力照常作用，视觉上是「升势放缓」而非「急刹车」 */
+    if (player.cut && player.vy < JUMP_CUT) {
+      player.vy += (JUMP_CUT - player.vy) * Math.min(1, dt * 14);
+      if (player.vy >= JUMP_CUT) player.vy = JUMP_CUT;
+    }
     player.vy += GRAVITY * dt;
     player.y += player.vy * dt;
     if (player.y >= G - PLAYER_H) {
       player.y = G - PLAYER_H;
       player.vy = 0;
       player.onGround = true;
+      player.landT = 0.10;                               // 落地压扁回弹（wip13：减半减短）
       dust(PLAYER_X + PLAYER_W / 2, G, 5);
     }
   } else if (Math.random() < dt * 6) {
@@ -609,7 +665,7 @@ function updatePlay(dt) {
   const nearGate = mode === 'level' && lv.gate && dist > lv.length - 1000;
   if (spawnT <= 0) {
     spawnT = ivMin + Math.random() * (ivMax - ivMin);
-    if (!nearGate) spawnObstacle();
+    if (!nearGate && !outro) spawnObstacle();
   }
 
   /* 随机大将军印：仅无限模式。关卡模式的印一律走 sealAt 剧情印——
@@ -621,7 +677,7 @@ function updatePlay(dt) {
   }
   /* 剧情保证印（按关卡进度比例触发，确保关键演出必有变身）
      关卡（gate:true）的印贴地摆放（rel -34），奔跑路径上直接拾取，不可能错过 */
-  if (mode === 'level' && lv.sealAt) {
+  if (mode === 'level' && lv.sealAt && !outro) {
     for (let i = 0; i < lv.sealAt.length; i++) {
       const p = lv.sealAt[i];
       if (dist >= lv.length * p && usedSeals.indexOf(p) < 0) {
@@ -657,7 +713,7 @@ function updatePlay(dt) {
           /* 玩家变身：张钦追不上「威武大将军」，放弃追击被甩在身后（shaken：不再参与碰撞） */
           o.chasing = false;
           o.shaken = true;
-          hintText = '张钦追不上「大将军」，被远远甩在身后！'; hintT = 2;
+          hintText = '张钦追不上「大将军」，被远远甩在身后！'; hintT = 2; hintStory = true;
         } else {
           o.chaseT += dt;
           if (o.cool > 0) o.cool -= dt;
@@ -692,7 +748,7 @@ function updatePlay(dt) {
         burst(a.x + ad.w / 2, G - ad.h / 2, 14, '#e0705a');
         AudioSys.smash();
         shakeT = 0.18;
-        hintText = '张钦撞晕了！'; hintT = 1.5;
+        hintText = '张钦撞晕了！'; hintT = 1.5; hintStory = true;
         break;
       }
     }
@@ -742,12 +798,12 @@ function updatePlay(dt) {
         AudioSys.hit();
         shakeT = 0.2;
         companion = null;
-        hintText = '谷大用拦下张钦：「休得惊驾，陛下快走！」'; hintT = 2.5;
+        hintText = '谷大用拦下张钦：「休得惊驾，陛下快走！」'; hintT = 2.5; hintStory = true;
       } else if (o.type === 'zhangqin' && !o.chasing) {
         /* 普通形态碰到巡逻中的张钦：不判死，触发追击 */
         o.chasing = true; o.chaseT = 0; o.cool = 0.9;
         AudioSys.alert();
-        hintText = '张钦追上来了！跳过他，或引他撞上其他障碍！'; hintT = 2.5;
+        hintText = '张钦追上来了！跳过他，或引他撞上其他障碍！'; hintT = 2.5; hintStory = true;
       } else if (o.type === 'zhangqin' && o.cool > 0) {
         /* 追击触发后的宽限期，不判死 */
       } else if (companion && companion.following) {
@@ -759,7 +815,7 @@ function updatePlay(dt) {
         AudioSys.hit();
         shakeT = 0.2;
         companion = null;
-        hintText = '谷大用挡下了这一击：「奴婢……告退！」'; hintT = 2.5;
+        hintText = '谷大用挡下了这一击：「奴婢……告退！」'; hintT = 2.5; hintStory = true;
       } else {
         die();
         return;
@@ -770,18 +826,30 @@ function updatePlay(dt) {
 
   /* ---------- 谷大用（ companion 护驾） ----------
    * 规则：幕 3 起、关卡中段（默认 45%，可用 lv.compAt 覆写）从右侧入画；无限模式随机出现。
+   * 公平性：登场前检查玩家前方空档——附近有障碍则推迟（下一帧重判），避免接驾路径被障碍切断。
    * 玩家碰触后跟随（同步跳跃），直到关卡结束 / 终局 / 玩家未变身时
    * 撞上障碍物——由谷大用替陛下挡下一次，护驾即解除。
    * 变身朱寿（无敌）时撞碎障碍物不算，护驾不受变身影响。 */
-  if (mode === 'level' && levelIndex >= 2 && !companion && !companionUsed && dist >= lv.length * (lv.compAt || 0.45)) {
-    companion = { x: VW + 40, y: G - COMP_H, vy: 0, onGround: true, following: false, animT: 0 };
-    companionUsed = true;                              // 关卡模式每幕只登场一次：错过/护驾消耗后不再刷新
-    hintText = '谷大用赶来接驾——碰触他获得护驾！'; hintT = 2.5;
-    AudioSys.alert();
-  }
-  if (mode === 'endless' && !companion && dist >= companionSpawnAt) {
-    companion = { x: VW + 40, y: G - COMP_H, vy: 0, onGround: true, following: false, animT: 0 };
-    companionSpawnAt = dist + 2500 + Math.random() * 2000;
+  if ((mode === 'level' && levelIndex >= 2 && !companionUsed && dist >= lv.length * (lv.compAt || 0.45)) ||
+      (mode === 'endless' && !companion && dist >= companionSpawnAt)) {
+    if (!companion) {
+      /* 空档判定：玩家前方至屏幕右缘（含即将入屏者）均无存活障碍才登场 */
+      let crowded = false;
+      for (let i = 0; i < obstacles.length; i++) {
+        const o = obstacles[i];
+        if (!o.dead && o.x > PLAYER_X + 20 && o.x < VW + 80) { crowded = true; break; }
+      }
+      if (!crowded) {
+        companion = { x: VW + 40, y: G - COMP_H, vy: 0, onGround: true, following: false, animT: 0 };
+        if (mode === 'level') {
+          companionUsed = true;                            // 关卡模式每幕只登场一次：错过/护驾消耗后不再刷新
+          hintText = '谷大用赶来接驾——碰触他获得护驾！'; hintT = 2.5; hintStory = true;
+          AudioSys.alert();
+        } else {
+          companionSpawnAt = dist + 2500 + Math.random() * 2000;
+        }
+      }
+    }
   }
   if (companion) {
     companion.animT += dt;
@@ -807,7 +875,7 @@ function updatePlay(dt) {
         companion.following = true;
         AudioSys.seal();
         AudioSys.transform();
-        hintText = '谷大用：「陛下，奴婢护驾！」'; hintT = 2.5;
+        hintText = '谷大用：「陛下，奴婢护驾！」'; hintT = 2.5; hintStory = true;
       }
       if (companion.x < -60) companion = null;
     }
@@ -838,15 +906,56 @@ function updatePlay(dt) {
     items = [];
     outro = true;
     outroT = 0;
+    outroNext = 'finale';
     return;
   }
 
-  /* 普通关完成 */
-  if (mode === 'level' && !lv.gate && dist >= lv.length) {
+  /* v1.0.3 幕1 教学：前两个地面侍卫各给一次起跳时机提示——
+     预备级（提前约170px）：「长按跳得更高」；起跳级（到理想起跳点）：脉冲标记 +「现在起跳！」。
+     理想起跳点 = 侍卫距玩家前沿约 speed*0.40 px（满跳滞空 0.68s，起跳后恰在侍卫上方过顶）。
+     cueCounted 标记过身侍卫只登记一次，两个都过身后收课 */
+  if (mode === 'level' && levelIndex === 0 && jumpCueStage < 3 && !outro) {
+    jumpCueStage = 0;
+    const cueDist = Math.max(85, speed * 0.40);
+    for (let i = 0; i < obstacles.length; i++) {
+      const o = obstacles[i];
+      if (o.type !== 'shiwei' || o.dead || o.cueCounted) continue;
+      const gap = o.x - (PLAYER_X + PLAYER_W);
+      if (gap < -40) { o.cueCounted = true; jumpCuePassed++; continue; }
+      if (gap <= cueDist) jumpCueStage = 2;             // 到理想起跳点：现在起跳！
+      else if (gap <= cueDist + 170) jumpCueStage = 1;  // 接近中：先教长按
+      break;                                            // 只看最近一个未登记的侍卫
+    }
+    if (jumpCuePassed >= 2) jumpCueStage = 3;           // 前两个侍卫教完：收课
+  }
+
+  /* v1.0.3 幕1 教学：第一个奏折接近时提示「不好跳」——奏折离地100px，站立可跑过（玩家高57），
+     跳跃顶点140px会撞上，正解是别跳。提示挂在最近的奏折上，过身即收课 */
+  if (mode === 'level' && levelIndex === 0 && zouzheCueStage < 3 && !outro) {
+    zouzheCueStage = 0;
+    for (let i = 0; i < obstacles.length; i++) {
+      const o = obstacles[i];
+      if (o.type !== 'zouzhe' || o.dead) continue;
+      const gap = o.x - (PLAYER_X + PLAYER_W);
+      if (gap < -40) zouzheCueStage = 3;                // 奏折已过：教学完成
+      else if (gap <= 180) zouzheCueStage = 2;          // 接近中：提示别跳
+      break;                                            // 只看最近的奏折
+    }
+  }
+
+  /* 普通关完成：不再瞬间冻结切结算页（观感等同按暂停），同样走驰出演出——
+     胜利号角 + 障碍粒子退场清场 → 世界继续滚动、玩家继续奔跑 →「第X幕 · 完」横幅 → 结算页 */
+  if (mode === 'level' && !lv.gate && dist >= lv.length && !outro) {
     unlockAct(levelIndex + 1);
-    companion = null;
-    AudioSys.clear();
-    state = 'clear';
+    AudioSys.victory();
+    for (let i = 0; i < obstacles.length; i++) {
+      if (obstacles[i].type !== 'zhangqin') burst(obstacles[i].x + 10, G - 20, 3, '#b8a890');
+    }
+    obstacles = [];
+    items = [];
+    outro = true;
+    outroT = 0;
+    outroNext = 'clear';
   }
 }
 
@@ -866,6 +975,10 @@ function die() {
   if (mode === 'endless') {
     const li = fmtLi(dist);
     if (li > endlessBest) { endlessBest = li; store.set('ming_escape_best', String(li)); }
+  }
+  /* v1.0.3 幕1辅助计数：卡关玩家累计死亡≥3次后自动放慢节奏 */
+  if (mode === 'level' && levelIndex === 0) {
+    store.set('ming_escape_a1dies', String((parseInt(store.get('ming_escape_a1dies') || '0', 10) || 0) + 1));
   }
   companion = null;
   state = 'gameover';
@@ -1117,16 +1230,44 @@ function drawZhangqin(x, y, t, o) {
     ctx.fillRect(x + 13, y - 3, 4, 2);
   }
 }
+/* 明代横式广锁（14×10 原生像素格，游戏内 2×）：
+   纯长方枕形锁体（横式锁/枕头锁，无斜收不显圆）、顶部凹槽嵌直梁（V&A 嘉靖锁直梁形制）、
+   正面无锁孔（广锁钥孔开在端面，正面本不可见）、一道弦纹、
+   红绳绑钥匙缠于梁右端（台史博「红铜一字广锁」记载，红=威胁语义）。
+   锁体静止绘制（用户要求不摆动）。 */
+const SUO_GRID = [
+  'OLLOMMMMMMRRLO',
+  'OLLOMMMMMMMRLO',
+  'OLBBBBBBBBBBDO',
+  'OLBBBBBBBBBBDO',
+  'OLBBBBBBBBBBDO',
+  'OLDDDDDDDDDDDO',
+  'OLBBBBBBBBBBDO',
+  'OLBBBBBBBBBBDO',
+  'OLBBBBBBBBBBDO',
+  'OOOOOOOOOOOOOO'
+];
+const SUO_PAL = { O: '#241a08', L: '#d8ac48', B: '#bc9333', D: '#99732a', M: '#6b4e1c', R: '#a94438' };
 function drawSuo(x, y) {
-  ctx.fillStyle = '#8a8f9c';
-  ctx.fillRect(x + 4, y + 8, 10, 9);
-  ctx.strokeStyle = '#8a8f9c';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(x + 9, y + 8, 4, Math.PI, 0);
-  ctx.stroke();
-  ctx.fillStyle = '#d4a017';
-  ctx.fillRect(x + 8, y + 11, 2, 4);
+  const d = OBST_DEF.suo;
+  const pw = d.w / 14, ph = d.h / 10;
+  ctx.save();
+  ctx.translate(x + d.w / 2, y + 2);
+  for (let r = 0; r < SUO_GRID.length; r++) {
+    const row = SUO_GRID[r];
+    let c = 0;
+    while (c < row.length) {
+      const ch = row[c];
+      let c2 = c;
+      while (c2 < row.length && row[c2] === ch) c2++;
+      if (ch !== '.') {
+        ctx.fillStyle = SUO_PAL[ch];
+        ctx.fillRect((c - 7) * pw, -2 + r * ph, (c2 - c) * pw + 0.5, ph + 0.5);
+      }
+      c = c2;
+    }
+  }
+  ctx.restore();
 }
 function drawZouzhe(x, y, t, o) {
   /* 幕 5 彩蛋：谏言小字（深色底条 + 加大加亮，保证可读） */
@@ -1167,6 +1308,37 @@ function drawObstacles() {
     else if (o.type === 'shiwei') drawShiwei(o.x, oy, o.t);
     else if (o.type === 'suo') drawSuo(o.x, oy);
     else drawZouzhe(o.x, oy, o.t, o);
+    /* v1.0.3 幕1教学：起跳提示——「预备…」→ 进入起跳窗闪「跳！」+ 长按教学副行。
+       窗口按满跳滞空 0.68s × 幕1速度 250px/s ≈ 170px 设定 */
+    if (o.tutor && mode === 'level' && levelIndex === 0 && !outro) {
+      const gap = o.x - (PLAYER_X + PLAYER_W);
+      if (o.x < VW + 30 && gap > -60) {
+        const bob = Math.sin(gt * 6) * 3;
+        const cx = o.x + d.w / 2;
+        ctx.textAlign = 'center';
+        if (gap <= 170) {
+          ctx.globalAlpha = 0.75 + 0.25 * Math.sin(gt * 14);
+          ctx.fillStyle = '#ffd76a';
+          ctx.font = 'bold 20px sans-serif';
+          ctx.fillText('跳！', cx, oy - 46 + bob);
+          ctx.globalAlpha = 1;
+        } else {
+          ctx.fillStyle = 'rgba(232,228,216,0.85)';
+          ctx.font = 'bold 12px sans-serif';
+          ctx.fillText('预备…', cx, oy - 46 + bob);
+        }
+        ctx.fillStyle = '#ffd76a';
+        ctx.beginPath();
+        ctx.moveTo(cx, oy - 32 + bob);
+        ctx.lineTo(cx - 6, oy - 40 + bob);
+        ctx.lineTo(cx + 6, oy - 40 + bob);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = 'rgba(232,228,216,0.78)';
+        ctx.font = '9px sans-serif';
+        ctx.fillText('长按跳得更高', cx, oy - 64 + bob);
+      }
+    }
   }
 }
 function drawSealItem(it) {
@@ -1196,11 +1368,35 @@ function drawPlayer() {
   if (img) {
     const n = SHEET_FRAMES[zhushou ? 'zhushou' : 'zhuhouzhao'];
     const fw = img.width / n;
-    const f = player.onGround ? Math.floor(t * 10) % n : Math.max(0, n - 2);
-    /* 等比缩放，避免 32×32 源帧被拉伸变形（仅改绘制，不动碰撞盒） */
+    /* v1.0.3-wip13 跳跃手感·去果冻版：
+       空中完全不形变（拉伸/压扁/前倾叠在一起读起来像果冻，还显得人脱离跑道），
+       动感只靠上升/下落换帧（跑步姿势本身就有腾跃感）；
+       仅保留落地一瞬的小幅压扁（0.10s、≤5%，脚底锚点头下沉，不破坏贴地）。 */
+    let f;
+    if (player.onGround) f = Math.floor(t * 10) % n;
+    else f = player.vy < 0 ? n - 2 : n - 1;
+    /* 跑动颠步（与谷大用同款）：地面时每两帧整体上抬 1px，纯位移不形变，
+       只在 onGround 生效——跳起/落地压扁期间自动归零，不会与 squash 打架 */
+    const bob = player.onGround && player.landT <= 0 ? Math.floor(t * 10) % 2 : 0;
+    /* 等比缩放，避免源帧被拉伸变形（仅改绘制，不动碰撞盒） */
     const scale = Math.min(PLAYER_W / fw, PLAYER_H / img.height);
     const dw = fw * scale, dh = img.height * scale;
-    ctx.drawImage(img, f * fw, 0, fw, img.height, x + (PLAYER_W - dw) / 2, y + (PLAYER_H - dh) / 2, dw, dh);
+    let sx = 1, sy = 1;
+    if (player.onGround && player.landT > 0) {
+      const k = player.landT / 0.10;
+      sy = 1 - 0.05 * k; sx = 1 + 0.04 * k;                          // 落地压扁→弹回（减半减短）
+    } else if (!player.onGround && player.takeoffT > 0) {
+      /* wip16 起跳蹬伸：只在离地头几帧（0.07s 内 1→0 衰减），
+         幅度 ≤6% 且快速收敛——是「蹬地一蹬」的脉冲，不是 wip12 那种全程拉伸的果冻 */
+      const s = player.takeoffT / 0.07;
+      sy = 1 + 0.06 * s; sx = 1 - 0.04 * s;
+    }
+    ctx.save();
+    ctx.translate(x + PLAYER_W / 2, y + PLAYER_H - bob);
+    ctx.scale(sx, sy);
+    /* 锚点=脚底中心：精灵从 -dh 画到 0，脚底正好落在锚点上 */
+    ctx.drawImage(img, f * fw, 0, fw, img.height, -dw / 2, -dh, dw, dh);
+    ctx.restore();
   } else {
     /* 占位像素小人：朱厚照=黄龙袍 / 朱寿=红甲金盔 */
     const skin = '#f0c8a0';
@@ -1249,13 +1445,32 @@ function drawGudayong(x, y, t, c) {
   if (img) {
     const n = following ? SHEET_FRAMES.gudayong_moving : 1;
     const fw = img.width / n;
-    const f = following ? (Math.floor(t * 10) % n) : 0; // 站立恒取首帧
-    /* 等比缩放：各图原生尺寸 → COMP_W×COMP_H 盒内（跑动时轻微上下颠步） */
-    const bob = following && player.onGround ? Math.floor(t * 10) % 2 : 0;
+    /* 跳跃表现与朱厚照完全同款（wip14）：空中不播跑步循环，改用上升/下落两帧；
+       落地一瞬小幅压扁（复用玩家的 landT——跟随态纵坐标与玩家同步，落地同帧）；
+       地面跑动保留 1px 颠步，压扁/腾空时归零 */
+    let f;
+    if (following) {
+      if (c.onGround) f = Math.floor(t * 10) % n;
+      else f = player.vy < 0 ? n - 2 : n - 1;
+    } else f = 0;                                       // 站立恒取首帧
+    const bob = following && c.onGround && player.landT <= 0 ? Math.floor(t * 10) % 2 : 0;
+    /* 等比缩放：各图原生尺寸 → COMP_W×COMP_H 盒内 */
     const scale = Math.min(COMP_W / fw, COMP_H / img.height);
     const dw = fw * scale, dh = img.height * scale;
-    ctx.drawImage(img, f * fw, 0, fw, img.height,
-                  x + (COMP_W - dw) / 2, y + (COMP_H - dh) - bob, dw, dh);
+    let sx = 1, sy = 1;
+    if (following && c.onGround && player.landT > 0) {
+      const k = player.landT / 0.10;
+      sy = 1 - 0.05 * k; sx = 1 + 0.04 * k;            // 落地压扁→弹回（与玩家同款）
+    } else if (following && !c.onGround && player.takeoffT > 0) {
+      const s = player.takeoffT / 0.07;
+      sy = 1 + 0.06 * s; sx = 1 - 0.04 * s;            // 起跳蹬伸（与玩家同款）
+    }
+    ctx.save();
+    /* 锚点=盒底中心（颠步整体上抬、压扁时头下沉，脚底不脱离地面线） */
+    ctx.translate(x + COMP_W / 2, y + COMP_H - bob);
+    ctx.scale(sx, sy);
+    ctx.drawImage(img, f * fw, 0, fw, img.height, -dw / 2, -dh, dw, dh);
+    ctx.restore();
   } else {
     /* 占位：提督西厂的谷大用——大红蟒衣 · 乌纱描金曲脚帽 · 拂尘 · 无须老太监 */
     const bob = following && player.onGround ? Math.floor(t * 10) % 2 : 0;
@@ -1284,7 +1499,7 @@ function drawGudayong(x, y, t, c) {
     ctx.fillStyle = '#d4a017';                          // 镶金腰带来一点权宦气派
     ctx.fillRect(x + 5, yy + 24, 20, 2);
   }
-  if (following) {                                      // 护驾状态小标
+  if (following && !outro && state === 'play') {        // 护驾状态小标（幕终驰出/结算页不再显示，v1.0.3）
     ctx.fillStyle = 'rgba(20,24,34,0.72)';
     ctx.fillRect(x + 3, y - 16, 24, 12);
     ctx.fillStyle = '#ffd76a';
@@ -1403,15 +1618,36 @@ function drawHUD() {
     ctx.fillText('威武大将军 朱寿', VW - 52, 18);
     ctx.fillRect(VW - 90, 21, 76 * (transformT / TRANSFORM_TIME), 4);
   }
-  if (hintT > 0 && state === 'play') {
+  if (hintT > 0 && state === 'play' && (hintsOn || hintStory)) {   // 剧情播报不受提示开关屏蔽（wip18）
     ctx.globalAlpha = Math.min(1, hintT);
-    const tw = Math.min(VW - 10, hintText.length * 8.5 + 20);
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect((VW - tw) / 2, VH - 34, tw, 20);
-    ctx.fillStyle = '#ffffff';
     ctx.font = '9px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(hintText, VW / 2, VH - 21);
+    /* 竖屏逻辑宽仅 270px：超宽播报自动折两行（优先就近标点/空格断行），底条随之加高（wip21） */
+    var hLines = [hintText];
+    if (ctx.measureText(hintText).width > VW - 16) {
+      var hMid = Math.ceil(hintText.length / 2), hCut = -1, hd;
+      var hPunc = '，。！？：；、·…—　 ';
+      for (hd = 0; hd < hMid && hCut < 0; hd++) {
+        if (hPunc.indexOf(hintText.charAt(hMid - 1 - hd)) >= 0) hCut = hMid - hd;
+        else if (hPunc.indexOf(hintText.charAt(hMid + hd)) >= 0) hCut = hMid + hd + 1;
+      }
+      if (hCut < 0) hCut = hMid;
+      hLines = [hintText.slice(0, hCut), hintText.slice(hCut)];
+    }
+    var hW = 0;
+    for (var hi = 0; hi < hLines.length; hi++) {
+      var hw = ctx.measureText(hLines[hi]).width;
+      if (hw > hW) hW = hw;
+    }
+    var htw = Math.min(VW - 10, Math.ceil(hW) + 20);
+    var hbh = hLines.length > 1 ? 32 : 20;
+    var hby = VH - 14 - hbh;
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect((VW - htw) / 2, hby, htw, hbh);
+    ctx.fillStyle = '#ffffff';
+    for (hi = 0; hi < hLines.length; hi++) {
+      ctx.fillText(hLines[hi], VW / 2, hby + 13 + hi * 12);
+    }
     ctx.globalAlpha = 1;
   }
 }
@@ -1427,9 +1663,10 @@ function drawPauseOverlay() {
   ctx.fillText('途中暂停 · 不计胜负', VW / 2, portrait ? VH / 2 - 30 : VH / 2 - 24);
   button(VW / 2 - 70, portrait ? VH / 2 - 4 : VH / 2 - 2, 140, 30, '继续亲政', function () { paused = false; }, true);
   button(VW / 2 - 70, portrait ? VH / 2 + 40 : VH / 2 + 40, 140, 30, '回銮 · 主菜单', toMenu, false);
+  button(VW / 2 - 70, portrait ? VH / 2 + 80 : VH / 2 + 80, 140, 26, '教学播报：' + (hintsOn ? '开' : '关'), toggleHints, false);
   ctx.fillStyle = '#6a6680';
   ctx.font = '9px sans-serif';
-  ctx.fillText('按 P / Esc / 空格 也可继续', VW / 2, portrait ? VH / 2 + 88 : VH / 2 + 86);
+  ctx.fillText('按 P / Esc / 空格 也可继续', VW / 2, portrait ? VH / 2 + 122 : VH / 2 + 120);
 }
 function drawStoryOverlay() {
   const lv = LEVELS[levelIndex];
@@ -1635,6 +1872,7 @@ function drawMenu() {
   ctx.fillText('一场说走就走的出走 · 八幕完整篇章', VW / 2, portrait ? 184 : 104);
   button(VW / 2 - 90, portrait ? 240 : 128, 180, 30, '出关记 · 八幕选关', function () { menuPage = 'levels'; }, true);
   button(VW / 2 - 90, portrait ? 285 : 168, 180, 30, '居庸关 · 无限跑酷', startEndless, false);
+  button(VW / 2 - 90, portrait ? 340 : 240, 180, 24, '教学播报：' + (hintsOn ? '开' : '关'), toggleHints, false);
   ctx.fillStyle = '#8a86a0';
   ctx.font = '9px sans-serif';
   ctx.fillText('史料：《明史 · 张钦传》《明史 · 武宗本纪》《明武宗实录》', VW / 2, portrait ? 400 : 216);
@@ -1710,20 +1948,135 @@ function render() {
     if (companion) drawGudayong(Math.floor(companion.x), Math.floor(companion.y), companion.animT, companion);
     drawPlayer();
     drawParticles();
+    /* v1.0.3 幕1 起跳教学标记（世界坐标；深色底条保证任何背景下可读；wip23 教学播报「关」时屏蔽） */
+    if (hintsOn && jumpCueStage === 1) {
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 12px sans-serif';
+      const tw1 = ctx.measureText('长按跳得更高').width;
+      ctx.fillStyle = 'rgba(20,24,34,0.8)';
+      ctx.fillRect(PLAYER_X + PLAYER_W / 2 - tw1 / 2 - 7, G - PLAYER_H - 50, tw1 + 14, 19);
+      ctx.fillStyle = '#ffe9a8';
+      ctx.fillText('长按跳得更高', PLAYER_X + PLAYER_W / 2, G - PLAYER_H - 36);
+    } else if (hintsOn && jumpCueStage === 2) {
+      const pulse = 0.55 + 0.45 * Math.sin(gt * 9);
+      ctx.globalAlpha = pulse;
+      ctx.fillStyle = '#ffd76a';
+      /* 地面脉冲三角（起跳点，加大版） */
+      ctx.beginPath();
+      ctx.moveTo(PLAYER_X + PLAYER_W / 2, G - 17 - pulse * 6);
+      ctx.lineTo(PLAYER_X + PLAYER_W / 2 - 12, G - 2);
+      ctx.lineTo(PLAYER_X + PLAYER_W / 2 + 12, G - 2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 16px sans-serif';
+      const tw2 = ctx.measureText('现在起跳！').width;
+      ctx.fillStyle = 'rgba(20,24,34,0.82)';
+      ctx.fillRect(PLAYER_X + PLAYER_W / 2 - tw2 / 2 - 8, G - 96, tw2 + 16, 24);
+      ctx.fillStyle = '#ffd76a';
+      ctx.fillText('现在起跳！', PLAYER_X + PLAYER_W / 2, G - 78);
+      ctx.font = 'bold 11px sans-serif';
+      const tw3 = ctx.measureText('按住不放跳更高').width;
+      ctx.fillStyle = 'rgba(20,24,34,0.8)';
+      ctx.fillRect(PLAYER_X + PLAYER_W / 2 - tw3 / 2 - 7, G - 68, tw3 + 14, 18);
+      ctx.fillStyle = '#ffe9a8';
+      ctx.fillText('按住不放跳更高', PLAYER_X + PLAYER_W / 2, G - 55);
+    }
+    /* v1.0.3 幕1 奏折「不好跳」提示（深色底条 + 警示红，区别于起跳金） */
+    if (hintsOn && zouzheCueStage === 2) {
+      ctx.globalAlpha = 0.75 + 0.25 * Math.sin(gt * 9);
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 13px sans-serif';
+      const tw4 = ctx.measureText('不好跳——别跳，跑过去！').width;
+      ctx.fillStyle = 'rgba(40,12,12,0.85)';
+      ctx.fillRect(PLAYER_X + PLAYER_W / 2 - tw4 / 2 - 8, G - PLAYER_H - 52, tw4 + 16, 21);
+      ctx.fillStyle = '#ff9a8a';
+      ctx.fillText('不好跳——别跳，跑过去！', PLAYER_X + PLAYER_W / 2, G - PLAYER_H - 37);
+      ctx.globalAlpha = 1;
+    }
+    /* v1.0.3 教学延伸（与幕1教学同体系）：幕2印拾取 / 幕3护驾 / 幕4张钦应对——
+       均为条件持续显示（道具/角色在屏内即显示，完成或过身后自动消失）；
+       教学播报「关」时整体屏蔽（wip23），播报类 HUD 提示不受开关影响 */
+    if (hintsOn && mode === 'level' && !outro) {
+      /* 幕2：大将军印在屏内且未变身——玩家头顶金字提示 */
+      if (levelIndex === 1 && transformT <= 0) {
+        for (let i = 0; i < items.length; i++) {
+          const it = items[i];
+          if (!it.got && it.x < VW) {
+            ctx.globalAlpha = 0.75 + 0.25 * Math.sin(gt * 8);
+            ctx.textAlign = 'center';
+            ctx.font = 'bold 13px sans-serif';
+            const twS = ctx.measureText('接住大将军印！').width;
+            const sx = Math.max(twS / 2 + 8, Math.min(PLAYER_X + PLAYER_W / 2, VW - twS / 2 - 8));
+            ctx.fillStyle = 'rgba(30,22,4,0.85)';
+            ctx.fillRect(sx - twS / 2 - 8, G - PLAYER_H - 52, twS + 16, 21);
+            ctx.fillStyle = '#ffd76a';
+            ctx.fillText('接住大将军印！', sx, G - PLAYER_H - 37);
+            ctx.globalAlpha = 1;
+            break;
+          }
+        }
+      }
+      /* 幕3：谷大用在屏内未跟随——他头顶绿字提示（跟随成功即消失） */
+      if (levelIndex === 2 && companion && !companion.following && companion.x < VW - 10) {
+        ctx.globalAlpha = 0.75 + 0.25 * Math.sin(gt * 8);
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 13px sans-serif';
+        const twC = ctx.measureText('碰触谷大用——获得护驾！').width;
+        const cx = Math.max(twC / 2 + 10, Math.min(companion.x + COMP_W / 2, VW - twC / 2 - 10));
+        ctx.fillStyle = 'rgba(14,26,20,0.85)';
+        ctx.fillRect(cx - twC / 2 - 8, companion.y - 32, twC + 16, 21);
+        ctx.fillStyle = '#9fe8b8';
+        ctx.fillText('碰触谷大用——获得护驾！', cx, companion.y - 17);
+        ctx.globalAlpha = 1;
+      }
+      /* 幕4：首个张钦在屏内未触发追击——玩家头顶红字预教学（触发追击后由 HUD hint 接管） */
+      if (levelIndex === 3) {
+        for (let i = 0; i < obstacles.length; i++) {
+          const o = obstacles[i];
+          if (o.tutor && !o.chasing && !o.dead && o.x < VW) {
+            ctx.globalAlpha = 0.75 + 0.25 * Math.sin(gt * 8);
+            ctx.textAlign = 'center';
+            ctx.font = 'bold 13px sans-serif';
+            /* 竖屏逻辑宽仅 270px：用短文案 + 水平钳制，保证底条完全在屏内 */
+            const zqText = portrait ? '张钦拦路！跳过或引他撞障碍' : '张钦拦路！跳过他，或引他撞上其他障碍';
+            const twZ = ctx.measureText(zqText).width;
+            const zx = Math.max(twZ / 2 + 8, Math.min(PLAYER_X + PLAYER_W / 2, VW - twZ / 2 - 8));
+            ctx.fillStyle = 'rgba(40,12,12,0.85)';
+            ctx.fillRect(zx - twZ / 2 - 8, G - PLAYER_H - 52, twZ + 16, 21);
+            ctx.fillStyle = '#ff9a8a';
+            ctx.fillText(zqText, zx, G - PLAYER_H - 37);
+            ctx.globalAlpha = 1;
+            break;
+          }
+        }
+      }
+    }
   }
   ctx.restore();
   drawHUD();
-  /* v1.0.0 出关演出横幅：「出关」金字渐显渐隐 */
+  /* v1.0.0 出关演出横幅：幕8「出关」金字；其余幕「第X幕 · 完」+ 本幕标题（v1.0.3） */
   if (outro) {
     const a = outroT < 0.4 ? outroT / 0.4 : (outroT > 2.2 ? Math.max(0, 1 - (outroT - 2.2) / 0.6) : 1);
+    const lvB = LEVELS[levelIndex];
     ctx.globalAlpha = a;
     ctx.textAlign = 'center';
-    ctx.fillStyle = '#ffd76a';
-    ctx.font = 'bold 32px sans-serif';
-    ctx.fillText('出 关', VW / 2, portrait ? 130 : 104);
-    ctx.fillStyle = '#e8e4d8';
-    ctx.font = '11px sans-serif';
-    ctx.fillText('居庸关外，天高海阔', VW / 2, (portrait ? 130 : 104) + 26);
+    if (outroNext === 'clear') {
+      ctx.fillStyle = '#ffd76a';
+      ctx.font = 'bold 26px sans-serif';
+      ctx.fillText(lvB.act + ' · 完', VW / 2, portrait ? 130 : 104);
+      ctx.fillStyle = '#e8e4d8';
+      ctx.font = '11px sans-serif';
+      ctx.fillText(lvB.title, VW / 2, (portrait ? 130 : 104) + 24);
+    } else {
+      ctx.fillStyle = '#ffd76a';
+      ctx.font = 'bold 32px sans-serif';
+      ctx.fillText('出 关', VW / 2, portrait ? 130 : 104);
+      ctx.fillStyle = '#e8e4d8';
+      ctx.font = '11px sans-serif';
+      ctx.fillText('居庸关外，天高海阔', VW / 2, (portrait ? 130 : 104) + 26);
+    }
     ctx.globalAlpha = 1;
   }
   if (state === 'story') drawStoryOverlay();
