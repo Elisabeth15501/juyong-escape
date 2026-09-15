@@ -94,6 +94,9 @@ const AudioSys = {
   hit: function () { this.tone(220, 0.28, 'sawtooth', 0.09, 0, 60); },
   alert: function () { this.tone(330, 0.09, 'square', 0.09, 0, 240); this.tone(330, 0.09, 'square', 0.09, 0.14, 240); },
   smash: function () { this.tone(90, 0.3, 'sawtooth', 0.12, 0, 40); this.tone(320, 0.12, 'square', 0.06, 0.02, 80); },
+  /* 千斤闸（v1.2.0）：前摇 = 铁链绞盘咔哒（读时机的听觉通道）；落闸 = 闷雷砸地 */
+  gateTele: function () { this.tone(150, 0.07, 'square', 0.06); this.tone(150, 0.07, 'square', 0.06, 0.1); this.tone(150, 0.07, 'square', 0.06, 0.2); },
+  gateSlam: function () { this.tone(65, 0.22, 'sawtooth', 0.11, 0, 38); this.tone(200, 0.08, 'square', 0.05, 0.01, 90); },
   clear: function () { this.tone(523, 0.12, 'square', 0.07); this.tone(659, 0.12, 'square', 0.07, 0.12); this.tone(784, 0.2, 'square', 0.07, 0.24); },
   cry: function () { this.tone(392, 0.5, 'triangle', 0.06, 0, 330); this.tone(311, 0.8, 'triangle', 0.06, 0.6, 250); },
   /* 出关号角：上行大调琶音（出关是通关，不是碰撞） */
@@ -291,8 +294,51 @@ const OBST_DEF = {
   shiwei: { w: 26, h: 44, fly: false },       // 守关侍卫（地面 · 跳过他）
   suo: { w: 28, h: 20, fly: false },          // 侍卫掷出的锁（明代横式广锁 · 地面 · 跳过）
   zouzhe: { w: 24, h: 14, fly: true },        // 飞来的奏折（空中 · 千万别跳）
-  zhangqin: { w: 30, h: 48, fly: false }      // 追击型 BOSS：巡关御史张钦（巡逻→追击，不会跳跃）
+  zhangqin: { w: 30, h: 48, fly: false },     // 追击型 BOSS：巡关御史张钦（巡逻→追击，不会跳跃）
+  qianjin: { w: 24, h: 240, fly: false }      // v1.2.0 千斤闸（关城吊闸 · 定点时间障碍 · 四拍相位机）
 };
+
+/* ---------- 千斤闸（v1.2.0 wip1 · 四拍相位机，调研修订见 Wiki §3.1.1） ----------
+ * 拍① 升 1.2s（无碰撞）→ 拍② 顶停 0.7s（通过窗口+节奏锚点）→ 拍③ 前摇 0.35s（震动+音效）→ 拍④ 落闸贴地 0.5s（唯一致死态）
+ * 竖屏公平性：玩家不能停——spawn 相位校验保证抵达时必处安全相位带（升半开~顶停），永不「入屏即必死」 */
+const QJ = {
+  up: 1.2, top: 0.7, tele: 0.35, down: 0.5,   // 四拍时长（s）
+  slam: 0.1,                                   // 拍④头部砸地段（0.1s 内 150→0，余下 0.4s 贴地封死）
+  w: 24,                                       // 闸体宽（与 OBST_DEF.qianjin.w 一致）
+  raise: 150,                                  // 全升后闸底离地净空（玩家高 57 的 2.6 倍，跑过无需操作）
+  leaf: 240                                    // 闸体全高（顶到地；满跳顶点 197px 也越不过）
+};
+/* 相位推进：o.phase 0=升 1=顶停 2=前摇 3=落闸；o.pt 拍内计时。进前摇/落闸播报音效（读时机关键通道） */
+function qjAdvance(o, dt) {
+  o.pt += dt;
+  const durs = [QJ.up, QJ.top, QJ.tele, QJ.down];
+  while (o.pt >= durs[o.phase]) {
+    o.pt -= durs[o.phase];
+    o.phase = (o.phase + 1) % 4;
+    if (o.phase === 3) { AudioSys.gateSlam(); burst(o.x + QJ.w / 2, G - 4, 6, '#8a8494'); }
+    else if (o.phase === 2) AudioSys.gateTele();
+  }
+}
+/* 闸体落放比例 0=全升 1=贴地；净空 = 闸底离地高度（<57 即物理不可通过）。
+   拍①匀速升起；拍②③全升；拍④前 0.1s 快速砸地（ slamming），余下 0.4s 贴地封死 */
+function qjDrop(o) {
+  if (o.phase === 0) return 1 - o.pt / QJ.up;
+  if (o.phase === 1 || o.phase === 2) return 0;
+  return Math.min(1, o.pt / QJ.slam);
+}
+function qjOpening(o) { return QJ.raise * (1 - qjDrop(o)); }
+/* spawn 相位校验：让闸在玩家抵达时恰处安全相位带 A∈[0.6, 1.76]（升半开 75px ~ 顶停末端，留 0.14s 余量）。
+   A − t_a 可为负 → 取模回卷，闸可能以「贴地/前摇」态入屏再升起——玩家看得见完整四拍，抵达时必安全 */
+function qjCalibrate(o) {
+  const tA = (o.x - (PLAYER_X + PLAYER_W)) / Math.max(60, speed);   // 抵达耗时（speed 为生成帧实测值）
+  const cycle = QJ.up + QJ.top + QJ.tele + QJ.down;
+  const A = 0.6 + Math.random() * (1.76 - 0.6);
+  let pos = ((A - tA) % cycle + cycle) % cycle;
+  const durs = [QJ.up, QJ.top, QJ.tele, QJ.down];
+  o.phase = 0;
+  while (pos >= durs[o.phase]) { pos -= durs[o.phase]; o.phase++; }
+  o.pt = pos;
+}
 
 /* ---------- 运行时状态 ---------- */
 let state = 'menu';            // menu / story / play / clear / finale / gameover
@@ -310,6 +356,7 @@ let jumpCuePassed = 0;                  // v1.0.3 幕1：已过身侍卫计数�
 let zouzheCueStage = 0;                 // v1.0.3 幕1 教学：0=无 2=「不好跳」提示中 3=已完成（奏折：别跳跑过去）
 let spawnCount = 0;                     // v1.0.3 幕1 教学脚本计数（第1、2障碍=侍卫、第3=奏折）
 let firstObstDone = false;              // 幕 3 首障碍必为「锁」的一次性开关
+let qjTaught = false;                   // v1.2.0 千斤闸首见教学（每跑一次）
 let hintText = '';
 let hintStory = false;   // v1.0.3 提示双通道：剧情播报（true）不受提示开关屏蔽，教学提示（false）受 hintsOn 控制
 let endlessBest = parseInt(store.get('ming_escape_best') || '0', 10) || 0;
@@ -537,12 +584,19 @@ function spawnObstacle() {
   if (mode === 'endless') {
     types = dist > 3000 ? ['shiwei', 'suo', 'zouzhe'] : ['shiwei', 'suo'];
     if (dist > 120 * PX_PER_LI) types.push('zhangqin');   // 无限模式：过 120 里后张钦登场
+    /* v1.2.0 wip1 千斤闸：过 60 里后登场。按 2026-09-15 约定，新障碍先只在无限模式实测
+       效果（数值手感/可读性/节奏），玩家反馈确认后再回头配关卡（幕 4/幕 7）与难度参数 */
+    if (dist > 60 * PX_PER_LI) types.push('qianjin');
   } else {
     types = currentLevel().types.slice();                 // 张钦写在 L2/L3 types 里（与锁同规则）
   }
   /* 张钦全场唯一：已在场则本次改为生成其他障碍 */
   if (types.indexOf('zhangqin') >= 0 && obstacles.some(function (o) { return o.type === 'zhangqin'; })) {
     types = types.filter(function (t) { return t !== 'zhangqin'; });
+  }
+  /* 千斤闸同屏唯一：升降周期 + 长驻屏（全高门洞横穿全屏），双闸叠屏在实测期密度过高 */
+  if (types.indexOf('qianjin') >= 0 && obstacles.some(function (o) { return o.type === 'qianjin'; })) {
+    types = types.filter(function (t) { return t !== 'qianjin'; });
   }
   const type = types[Math.floor(Math.random() * types.length)];
   /* v1.0.0 幕 3 教学点：本幕第一个障碍必为「锁」（hint 里教的正是它）
@@ -565,6 +619,14 @@ function spawnObstacle() {
   const memo = (firstType === 'zouzhe' && mode === 'level' && levelIndex === 4)
     ? ZOUZHE_MEMOS[Math.floor(Math.random() * ZOUZHE_MEMOS.length)] : null;
   const ob = { type: firstType, x: VW + 50, t: 0, dead: false, chasing: false, chaseT: 0, cool: 0, memo: memo, tutor: isTutorZq };
+  /* v1.2.0 千斤闸初始化：spawn 相位校验（抵达必安全）+ 首闸教学播报（教学通道，受提示开关控制） */
+  if (firstType === 'qianjin') {
+    qjCalibrate(ob);
+    if (!qjTaught) {
+      qjTaught = true;
+      hintText = '千斤闸升降有时——趁它升起时跑过去，千万别跳！'; hintT = 3; hintStory = false;
+    }
+  }
   /* v1.0.3 幕1教学：本跑首个「地面」障碍（侍卫）挂起跳提示标——
      奏折是飞行障碍（不能跳），提示必须出现在玩家遇到的第一个地上障碍上 */
   if (mode === 'level' && levelIndex === 0 && !tutorUsed && firstType === 'shiwei') {
@@ -696,6 +758,7 @@ function updatePlay(dt) {
   for (let i = 0; i < obstacles.length; i++) {
     const o = obstacles[i];
     o.x -= mv; o.t += dt;
+    if (o.type === 'qianjin') qjAdvance(o, dt);   // v1.2.0 千斤闸四拍相位机（含前摇/落闸音效与落闸扬尘）
     /* v1.0.0 幕 5 掉落型奏折：加速下坠，落地成路障（扬尘提示） */
     if (o.fall && !o.landed) {
       o.vy += 1400 * dt;
@@ -779,7 +842,10 @@ function updatePlay(dt) {
     const o = obstacles[i];
     const d = OBST_DEF[o.type];
     const oy = obstY(o);
-    const obox = { x: o.x + 2, y: oy + 2, w: d.w - 4, h: d.h - 4 };
+    /* 千斤闸特例：碰撞盒 = 当前闸体（升起时闸底悬空，跳进闸洞同样撞闸体——物理一致） */
+    const obox = (o.type === 'qianjin')
+      ? { x: o.x + 2, y: G - qjOpening(o) - QJ.leaf + 2, w: QJ.w - 4, h: QJ.leaf - 4 }
+      : { x: o.x + 2, y: oy + 2, w: d.w - 4, h: d.h - 4 };
     if (rectsOverlap(pr, obox)) {
       if (o.type === 'zhangqin' && o.shaken) {
         /* 被甩的张钦：漂离途中不再参与任何碰撞（玩家从他身边跑过） */
@@ -1292,6 +1358,47 @@ function drawZouzhe(x, y, t, o) {
   ctx.fillRect(-8, 1, 16, 2);
   ctx.restore();
 }
+/* v1.2.0 千斤闸：门框先行（入屏第一帧即见石柱/横梁/闸槽——定点障碍的位置预告免费，玩家只需学相位）。
+   闸叶只画在门框窗口内的可见段（升起时缩到门洞顶部，不悬出梁外）；拍③震动；拍④贴地一线红警示 */
+function drawQianjin(o) {
+  const drop = qjDrop(o);
+  const open = qjOpening(o);
+  const bx = o.x + ((o.phase === 2) ? Math.sin(o.pt * 80) * 1.2 : 0);   // 拍③ 前摇震动（音效同步）
+  const leafBottom = G - open;
+  const leafTop = leafBottom - QJ.leaf;
+  /* 门框：两侧石柱 + 顶部横梁 + 闸槽阴影（恒定可见） */
+  ctx.fillStyle = '#4e4660';
+  ctx.fillRect(o.x - 6, G - QJ.leaf - 14, 6, QJ.leaf + 14);
+  ctx.fillRect(o.x + QJ.w, G - QJ.leaf - 14, 6, QJ.leaf + 14);
+  ctx.fillStyle = '#5f5772';
+  ctx.fillRect(o.x - 8, G - QJ.leaf - 20, QJ.w + 16, 10);
+  ctx.fillStyle = '#2e2940';
+  ctx.fillRect(o.x - 2, G - QJ.leaf - 12, QJ.w + 4, 4);
+  /* 闸体：铁制横棂闸叶，可见段裁切到门框窗口 [G-QJ.leaf, G] */
+  const visTop = Math.max(leafTop, G - QJ.leaf);
+  const visBottom = Math.min(leafBottom, G);
+  if (visBottom > visTop) {
+    ctx.fillStyle = '#332e40';
+    ctx.fillRect(bx, visTop, QJ.w, visBottom - visTop);
+    ctx.fillStyle = '#4a4358';
+    for (let y = leafTop + 6; y < leafBottom - 4; y += 14) {
+      if (y >= visTop && y + 4 <= visBottom) ctx.fillRect(bx + 2, y, QJ.w - 4, 4);
+    }
+    ctx.fillStyle = '#5c5468';
+    ctx.fillRect(bx, visTop, 3, visBottom - visTop);
+    ctx.fillStyle = '#241f30';
+    ctx.fillRect(bx + QJ.w - 3, visTop, 3, visBottom - visTop);
+    ctx.fillStyle = '#8a8494';
+    for (let y = leafTop + 10; y < leafBottom - 6; y += 28) {
+      if (y >= visTop && y + 2 <= visBottom) { ctx.fillRect(bx + 5, y, 2, 2); ctx.fillRect(bx + QJ.w - 7, y, 2, 2); }
+    }
+  }
+  /* 唯一致死态强信号：贴地时闸底一线红 */
+  if (o.phase === 3 && drop > 0.85) {
+    ctx.fillStyle = '#c04040';
+    ctx.fillRect(bx, G - 3, QJ.w, 3);
+  }
+}
 function drawObstacles() {
   for (let i = 0; i < obstacles.length; i++) {
     const o = obstacles[i];
@@ -1307,6 +1414,7 @@ function drawObstacles() {
     if (o.type === 'zhangqin') drawZhangqin(o.x, oy, o.t, o);
     else if (o.type === 'shiwei') drawShiwei(o.x, oy, o.t);
     else if (o.type === 'suo') drawSuo(o.x, oy);
+    else if (o.type === 'qianjin') drawQianjin(o);
     else drawZouzhe(o.x, oy, o.t, o);
     /* v1.0.3 幕1教学：起跳提示——「预备…」→ 进入起跳窗闪「跳！」+ 长按教学副行。
        窗口按满跳滞空 0.68s × 幕1速度 250px/s ≈ 170px 设定 */
