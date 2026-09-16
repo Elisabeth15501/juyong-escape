@@ -307,7 +307,7 @@ const QJ = {
   w: 24,                                       // 闸体宽（与 OBST_DEF.qianjin.w 一致）
   raise: 150,                                  // 全升后闸底离地净空（玩家高 57 的 2.6 倍，跑过无需操作）
   leaf: 240,                                   // 闸体全高（顶到地；满跳顶点 197px 也越不过）
-  warnDist: 340                                // 屏缘预警距离：闸体在屏右外侧此范围内即闪双感叹号（≈0.8-1.1s 抵达量）
+  warnDist: 420                                // 预警距离 = 生成点外推距离：闸一生成即在预警带内，屏外全程亮灯（≈1.0-1.4s）
 };
 /* 相位推进：o.phase 0=升 1=顶停 2=前摇 3=落闸；o.pt 拍内计时。进前摇/落闸播报音效（读时机关键通道） */
 function qjAdvance(o, dt) {
@@ -620,8 +620,11 @@ function spawnObstacle() {
   const memo = (firstType === 'zouzhe' && mode === 'level' && levelIndex === 4)
     ? ZOUZHE_MEMOS[Math.floor(Math.random() * ZOUZHE_MEMOS.length)] : null;
   const ob = { type: firstType, x: VW + 50, t: 0, dead: false, chasing: false, chaseT: 0, cool: 0, memo: memo, tutor: isTutorZq };
-  /* v1.2.0 千斤闸初始化：spawn 相位校验（抵达必安全）+ 首闸教学播报（教学通道，受提示开关控制） */
+  /* v1.2.0 千斤闸初始化：spawn 相位校验（抵达必安全）+ 首闸教学播报（教学通道，受提示开关控制）。
+     wip2b：默认生成点 VW+50 太贴屏，预警只亮 ~0.15s——改为生成点=预警带外缘（VW+420），
+     一生成即亮灯、屏外全程预警；qjCalibrate 按实际 x 动态校准相位，安全带结论不受生成距离影响 */
   if (firstType === 'qianjin') {
+    ob.x = VW + QJ.warnDist;   // 生成点 = 预警带外缘：一生成即亮灯，屏外全程预警（≈1.0-1.4s，随速度反比）
     qjCalibrate(ob);
     if (!qjTaught) {
       qjTaught = true;
