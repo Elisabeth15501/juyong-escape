@@ -306,7 +306,8 @@ const QJ = {
   slam: 0.1,                                   // 拍④头部砸地段（0.1s 内 150→0，余下 0.4s 贴地封死）
   w: 24,                                       // 闸体宽（与 OBST_DEF.qianjin.w 一致）
   raise: 150,                                  // 全升后闸底离地净空（玩家高 57 的 2.6 倍，跑过无需操作）
-  leaf: 240                                    // 闸体全高（顶到地；满跳顶点 197px 也越不过）
+  leaf: 240,                                   // 闸体全高（顶到地；满跳顶点 197px 也越不过）
+  warnDist: 340                                // 屏缘预警距离：闸体在屏右外侧此范围内即闪双感叹号（≈0.8-1.1s 抵达量）
 };
 /* 相位推进：o.phase 0=升 1=顶停 2=前摇 3=落闸；o.pt 拍内计时。进前摇/落闸播报音效（读时机关键通道） */
 function qjAdvance(o, dt) {
@@ -1360,6 +1361,31 @@ function drawZouzhe(x, y, t, o) {
 }
 /* v1.2.0 千斤闸：门框先行（入屏第一帧即见石柱/横梁/闸槽——定点障碍的位置预告免费，玩家只需学相位）。
    闸叶只画在门框窗口内的可见段（升起时缩到门洞顶部，不悬出梁外）；拍③震动；拍④贴地一线红警示 */
+/* v1.2.0-wip2 屏缘预警：闸体尚在屏右外侧逼近时，右缘闪双红感叹号（天天酷跑验证过的可读性手段）。
+   入屏即收（门框先行已接管位置预告）；判定/透明度拆成纯函数便于测试 */
+function qjWarnVisible(o) {
+  return o.type === 'qianjin' && !o.dead && o.x > VW + 8 && o.x - VW < QJ.warnDist;
+}
+function qjWarnAlpha(t) {
+  return 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(t * 9));   // ≈1.4Hz 呼吸脉冲（gt 驱动，暂停也走）
+}
+function drawQjWarn() {
+  const gate = obstacles.find(qjWarnVisible);
+  if (!gate) return;
+  const a = qjWarnAlpha(gt);
+  /* 两个像素感叹号：竖条+点，右缘竖向中段（跑道核心区），深红衬底防浅色背景吞色 */
+  const bx = VW - 30, by = G - 118;
+  ctx.globalAlpha = a;
+  for (let k = 0; k < 2; k++) {
+    const x = bx + k * 13;
+    ctx.fillStyle = '#501313';
+    ctx.fillRect(x + 1, by + 1, 6, 18); ctx.fillRect(x + 1, by + 23, 6, 6);
+    ctx.fillStyle = '#E24B4A';
+    ctx.fillRect(x, by, 6, 18); ctx.fillRect(x, by + 22, 6, 6);
+  }
+  ctx.globalAlpha = 1;
+}
+
 function drawQianjin(o) {
   const drop = qjDrop(o);
   const open = qjOpening(o);
@@ -2052,6 +2078,7 @@ function render() {
   } else {
     drawGate();
     drawObstacles();
+    drawQjWarn();
     drawItems();
     if (companion) drawGudayong(Math.floor(companion.x), Math.floor(companion.y), companion.animT, companion);
     drawPlayer();
