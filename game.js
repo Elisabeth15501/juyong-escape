@@ -616,6 +616,13 @@ function spawnObstacle() {
     if (spawnCount <= 2) firstType = 'shiwei';
     else if (spawnCount === 3) firstType = 'zouzhe';
   }
+  /* v1.2.0-wip3 无限模式教学脚本（与幕1同款节奏，「大约头五个」）：前 2 个=侍卫（起跳教学）、
+     第 3 个=奏折（别跳教学）、第 4 个=锁（跳过它）；第 5 个起回归随机池自然混出 */
+  if (mode === 'endless') {
+    if (spawnCount <= 2) firstType = 'shiwei';
+    else if (spawnCount === 3) firstType = 'zouzhe';
+    else if (spawnCount === 4) firstType = 'suo';
+  }
   /* v1.0.0 幕 5 彩蛋：奏折随机挂谏言文案 */
   const memo = (firstType === 'zouzhe' && mode === 'level' && levelIndex === 4)
     ? ZOUZHE_MEMOS[Math.floor(Math.random() * ZOUZHE_MEMOS.length)] : null;
@@ -632,10 +639,15 @@ function spawnObstacle() {
     }
   }
   /* v1.0.3 幕1教学：本跑首个「地面」障碍（侍卫）挂起跳提示标——
-     奏折是飞行障碍（不能跳），提示必须出现在玩家遇到的第一个地上障碍上 */
-  if (mode === 'level' && levelIndex === 0 && !tutorUsed && firstType === 'shiwei') {
+     奏折是飞行障碍（不能跳），提示必须出现在玩家遇到的第一个地上障碍上
+     v1.2.0-wip3：无限模式同款（首个侍卫即首个障碍） */
+  if ((mode === 'endless' || (mode === 'level' && levelIndex === 0)) && !tutorUsed && firstType === 'shiwei') {
     ob.tutor = true;
     tutorUsed = true;
+  }
+  /* v1.2.0-wip3 无限模式教学：第 4 个障碍=锁，一次性提示（教学通道，受「教学播报」开关控制） */
+  if (mode === 'endless' && spawnCount === 4 && firstType === 'suo') {
+    hintText = '地上有锁——跳过去！'; hintT = 2.5; hintStory = false;
   }
   /* v1.0.0 幕 5「奏折雨」：一半奏折从高空掉落——落地成路障（影子预警，引玩家跳过），
      与贴地飞行的奏折（不能跳）形成上下夹击，把「奏折如雨」具象化 */
@@ -984,7 +996,7 @@ function updatePlay(dt) {
      预备级（提前约170px）：「长按跳得更高」；起跳级（到理想起跳点）：脉冲标记 +「现在起跳！」。
      理想起跳点 = 侍卫距玩家前沿约 speed*0.40 px（满跳滞空 0.68s，起跳后恰在侍卫上方过顶）。
      cueCounted 标记过身侍卫只登记一次，两个都过身后收课 */
-  if (mode === 'level' && levelIndex === 0 && jumpCueStage < 3 && !outro) {
+  if ((mode === 'endless' || (mode === 'level' && levelIndex === 0)) && jumpCueStage < 3 && !outro) {
     jumpCueStage = 0;
     const cueDist = Math.max(85, speed * 0.40);
     for (let i = 0; i < obstacles.length; i++) {
@@ -1001,7 +1013,7 @@ function updatePlay(dt) {
 
   /* v1.0.3 幕1 教学：第一个奏折接近时提示「不好跳」——奏折离地100px，站立可跑过（玩家高57），
      跳跃顶点140px会撞上，正解是别跳。提示挂在最近的奏折上，过身即收课 */
-  if (mode === 'level' && levelIndex === 0 && zouzheCueStage < 3 && !outro) {
+  if ((mode === 'endless' || (mode === 'level' && levelIndex === 0)) && zouzheCueStage < 3 && !outro) {
     zouzheCueStage = 0;
     for (let i = 0; i < obstacles.length; i++) {
       const o = obstacles[i];
@@ -1447,7 +1459,7 @@ function drawObstacles() {
     else drawZouzhe(o.x, oy, o.t, o);
     /* v1.0.3 幕1教学：起跳提示——「预备…」→ 进入起跳窗闪「跳！」+ 长按教学副行。
        窗口按满跳滞空 0.68s × 幕1速度 250px/s ≈ 170px 设定 */
-    if (o.tutor && mode === 'level' && levelIndex === 0 && !outro) {
+    if (o.tutor && (mode === 'endless' || (mode === 'level' && levelIndex === 0)) && !outro) {
       const gap = o.x - (PLAYER_X + PLAYER_W);
       if (o.x < VW + 30 && gap > -60) {
         const bob = Math.sin(gt * 6) * 3;
