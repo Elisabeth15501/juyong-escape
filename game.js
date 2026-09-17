@@ -193,7 +193,7 @@ const LEVELS = [
     after: '第一次出关失败。\n但奏折拦不住、关门拦不住——\n他在等一个关防空虚的日子。',
     scene: 'pass',
     sky: ['#f6c06a', '#d97a4a'], far: '#3a3652', mid: '#4d4360', ground: '#2f2a3a',
-    speed: 300, interval: [1.1, 1.6], types: ['shiwei', 'suo', 'zouzhe', 'zhangqin'], length: 6500,
+    speed: 300, interval: [1.1, 1.6], types: ['shiwei', 'suo', 'zouzhe', 'zhangqin', 'qianjin'], length: 6500,
     sealAt: [0.3, 0.7],
     hint: '张钦亲自坐镇！跳过他，或引他撞上障碍！',
     gate: false,
@@ -238,7 +238,7 @@ const LEVELS = [
     after: '《明史 · 武宗本纪》：\n「令太监谷大用守关，无纵出者。」\n这一次，守关的太监\n成了皇帝的内应。',
     scene: 'pass',
     sky: ['#2d3a5e', '#7a5a72'], far: '#3a3652', mid: '#4d4360', ground: '#2f2a3a',
-    speed: 320, interval: [0.95, 1.4], types: ['shiwei', 'suo', 'zouzhe'], length: 8000,
+    speed: 320, interval: [0.95, 1.4], types: ['shiwei', 'suo', 'zouzhe', 'qianjin'], length: 8000,
     sealAt: [0.85],
     hint: '障碍最密！谷大用中段登场——碰触他获得护驾！',
     gate: false,
@@ -358,6 +358,7 @@ let zouzheCueStage = 0;                 // v1.0.3 幕1 教学：0=无 2=「不�
 let spawnCount = 0;                     // v1.0.3 幕1 教学脚本计数（第1、2障碍=侍卫、第3=奏折）
 let firstObstDone = false;              // 幕 3 首障碍必为「锁」的一次性开关
 let qjTaught = false;                   // v1.2.0 千斤闸首见教学（每跑一次）
+let qjCool = 0;                         // v1.2.0-wip4 千斤闸登场冷却（s）：闸横穿全屏 2.3s，冷却防连续闸成「闸海」
 let hintText = '';
 let hintStory = false;   // v1.0.3 提示双通道：剧情播报（true）不受提示开关屏蔽，教学提示（false）受 hintsOn 控制
 let endlessBest = parseInt(store.get('ming_escape_best') || '0', 10) || 0;
@@ -461,6 +462,7 @@ function resetRun() {
   jumpCuePassed = 0;
   zouzheCueStage = 0;
   spawnCount = 0;
+  qjCool = 0;
   paused = false;
 }
 
@@ -599,6 +601,10 @@ function spawnObstacle() {
   if (types.indexOf('qianjin') >= 0 && obstacles.some(function (o) { return o.type === 'qianjin'; })) {
     types = types.filter(function (t) { return t !== 'qianjin'; });
   }
+  /* v1.2.0-wip4 闸冷却：上一闸登场 6s 内不再抽中（横穿全屏 2.3s + 读相位余量），关卡/无限通用 */
+  if (qjCool > 0) {
+    types = types.filter(function (t) { return t !== 'qianjin'; });
+  }
   const type = types[Math.floor(Math.random() * types.length)];
   /* v1.0.0 幕 3 教学点：本幕第一个障碍必为「锁」（hint 里教的正是它）
      v1.0.3 幕 4 教学点：本幕第一个障碍必为「张钦」并挂教学标（教「跳过他或引他撞障碍」） */
@@ -632,6 +638,7 @@ function spawnObstacle() {
      一生成即亮灯、屏外全程预警；qjCalibrate 按实际 x 动态校准相位，安全带结论不受生成距离影响 */
   if (firstType === 'qianjin') {
     ob.x = VW + QJ.warnDist;   // 生成点 = 预警带外缘：一生成即亮灯，屏外全程预警（≈1.0-1.4s，随速度反比）
+    qjCool = 6;                // wip4 登场冷却
     qjCalibrate(ob);
     if (!qjTaught) {
       qjTaught = true;
@@ -740,6 +747,7 @@ function updatePlay(dt) {
   }
   if (portrait) { ivMin += 0.1; ivMax += 0.15; }
   spawnT -= dt;
+  if (qjCool > 0) qjCool -= dt;
   const nearGate = mode === 'level' && lv.gate && dist > lv.length - 1000;
   if (spawnT <= 0) {
     spawnT = ivMin + Math.random() * (ivMax - ivMin);
