@@ -307,7 +307,8 @@ const QJ = {
   w: 24,                                       // 闸体宽（与 OBST_DEF.qianjin.w 一致）
   raise: 150,                                  // 全升后闸底离地净空（玩家高 57 的 2.6 倍，跑过无需操作）
   leaf: 240,                                   // 闸体全高（顶到地；满跳顶点 197px 也越不过）
-  warnDist: 420                                // 预警距离 = 生成点外推距离：闸一生成即在预警带内，屏外全程亮灯（≈1.0-1.4s）
+  warnDist: 420,                               // 预警距离 = 生成点外推距离：闸一生成即在预警带内，屏外全程亮灯（≈1.0-1.4s）
+  gap: 260                                     // 与其他障碍的最小水平间距（wip5）：满跳全程水平位移 ≈204px，落地后仍留 ≥56px 地面缓冲
 };
 /* 相位推进：o.phase 0=升 1=顶停 2=前摇 3=落闸；o.pt 拍内计时。进前摇/落闸播报音效（读时机关键通道） */
 function qjAdvance(o, dt) {
@@ -633,6 +634,14 @@ function spawnObstacle() {
   const memo = (firstType === 'zouzhe' && mode === 'level' && levelIndex === 4)
     ? ZOUZHE_MEMOS[Math.floor(Math.random() * ZOUZHE_MEMOS.length)] : null;
   const ob = { type: firstType, x: VW + 50, t: 0, dead: false, chasing: false, chaseT: 0, cool: 0, memo: memo, tutor: isTutorZq };
+  /* v1.2.0-wip5 防重叠：新障碍与在场千斤闸的最小水平间距。闸叶全高 240px（不能跳），
+     跳其他障碍的满跳水平位移 ≈204px——间距不足时跳跃弧线会扫进闸叶，或闸后贴脸出障碍形成必死局。
+     所有障碍同速左移、相对间距恒定，spawn 时查一次即可；冲突则本次放弃生成（不置 tutorUsed/hint 等副作用），等下一轮 */
+  if (firstType !== 'qianjin') {
+    for (let gi = 0; gi < obstacles.length; gi++) {
+      if (obstacles[gi].type === 'qianjin' && Math.abs(obstacles[gi].x - ob.x) < QJ.gap) return;
+    }
+  }
   /* v1.2.0 千斤闸初始化：spawn 相位校验（抵达必安全）+ 首闸教学播报（教学通道，受提示开关控制）。
      wip2b：默认生成点 VW+50 太贴屏，预警只亮 ~0.15s——改为生成点=预警带外缘（VW+420），
      一生成即亮灯、屏外全程预警；qjCalibrate 按实际 x 动态校准相位，安全带结论不受生成距离影响 */
