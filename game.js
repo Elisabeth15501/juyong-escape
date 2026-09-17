@@ -929,6 +929,9 @@ function updatePlay(dt) {
           AudioSys.alert();
         } else {
           companionSpawnAt = dist + 2500 + Math.random() * 2000;
+          /* v1.2.0-wip3b：无限模式登场也播同款提示（剧情通道不屏蔽）+ 登场音效，与关卡模式对齐 */
+          hintText = '谷大用赶来接驾——碰触他获得护驾！'; hintT = 2.5; hintStory = true;
+          AudioSys.alert();
         }
       }
     }
