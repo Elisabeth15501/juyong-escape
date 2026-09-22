@@ -310,6 +310,20 @@ const QJ = {
   warnDist: 420,                               // 预警距离 = 生成点外推距离：闸一生成即在预警带内，屏外全程亮灯（≈1.0-1.4s）
   gap: 260                                     // 与其他障碍的最小水平间距（wip5）：满跳全程水平位移 ≈204px，落地后仍留 ≥56px 地面缓冲
 };
+
+/* ---------- 高台（单向平台）v1.3.0 ----------
+   敌台垛口薄板：X 轴永不阻挡；Y 轴仅当「上一帧脚底整体在台面之上」才可站立（位置比较法）。
+   「薄板=可穿越」视觉惯例：板厚 ≤8px、无支撑柱，玩家一眼读懂单向语义。 */
+const PLAT = {
+  h: 70,                                       // 台面离地高（满跳顶点 197px 的 1/3，现有轻点跳即可上）
+  w: 80,                                       // 台宽（玩家穿越约 0.20-0.27s，短促的空中喘息窗）
+  th: 8,                                       // 板厚
+  edge: 4,                                     // 台缘判定内缩（左右各 4px，防边缘擦碰）
+  interval: [7, 10],                           // 生成间隔（s）：平台是稀缺资源，频率最低档起步
+  dist: 40 * 150,                              // 无限模式 40 里后登场（40*PX_PER_LI，先实测再配关卡）
+  gapObs: 140,                                 // 与地面障碍最小间距：台宽 80 + 落地缓冲 60
+  gapGate: 260                                 // 与千斤闸最小间距（= QJ.gap，闸叶全高会扫过台面，互斥）
+};
 /* 相位推进：o.phase 0=升 1=顶停 2=前摇 3=落闸；o.pt 拍内计时。进前摇/落闸播报音效（读时机关键通道） */
 function qjAdvance(o, dt) {
   o.pt += dt;
@@ -360,6 +374,9 @@ let spawnCount = 0;                     // v1.0.3 幕1 教学脚本计数（第1
 let firstObstDone = false;              // 幕 3 首障碍必为「锁」的一次性开关
 let qjTaught = false;                   // v1.2.0 千斤闸首见教学（每跑一次）
 let qjCool = 0;                         // v1.2.0-wip4 千斤闸登场冷却（s）：闸横穿全屏 2.3s，冷却防连续闸成「闸海」
+let platforms = [];                     // v1.3.0 高台（单向平台）：{ x: 屏幕x, rel: 相对地面负偏移（防旋转） }
+let platT = 0;                          // 高台生成计时器（s）
+let platTaught = false;                 // 高台首见教学（每会话一次，不随跑重置）
 let hintText = '';
 let hintStory = false;   // v1.0.3 提示双通道：剧情播报（true）不受提示开关屏蔽，教学提示（false）受 hintsOn 控制
 let endlessBest = parseInt(store.get('ming_escape_best') || '0', 10) || 0;
@@ -436,9 +453,11 @@ function wrapText(text, x, y, maxW, lh) {
 function currentLevel() { return mode === 'level' ? LEVELS[levelIndex] : null; }
 
 function resetRun() {
-  player = { y: G - PLAYER_H, vy: 0, onGround: true, form: 'zhuhouzhao', animT: 0, landT: 0 };
+  player = { y: G - PLAYER_H, vy: 0, onGround: true, support: null, form: 'zhuhouzhao', animT: 0, landT: 0 };
   obstacles = [];
   items = [];
+  platforms = [];                       // v1.3.0 高台
+  platT = 5;                            // 开跑 5s 后才可能出首个平台（教学脚本前 5 障碍不受打扰）
   particles = [];
   gate = null;
   dist = 0;
@@ -504,6 +523,7 @@ function jump() {
   if (state !== 'play' || paused) return;
   if (player.onGround) {
     player.onGround = false;
+    player.support = null;           // v1.3.0 离开支撑面（地面或台面）
     player.vy = JUMP_V;
     player.takeoffT = 0.07;          // wip16 起跳蹬伸窗口（约4帧，快速衰减，只此一段形变）
     player.cut = false;
@@ -583,6 +603,40 @@ function confirmAction() {
 }
 
 /* ---------- 生成 ---------- */
+/* ---------- v1.3.0 高台（单向平台）生成 ----------
+   地形通道（独立于 obstacles，不参与障碍碰撞）：台面段净空、与障碍/闸双向间距互斥。
+   平台与障碍同速左移、相对间距恒定，生成时查一次即可。冲突则本次放弃（等下一轮计时） */
+function spawnPlatform() {
+  const px = VW + 50;
+  for (let i = 0; i < obstacles.length; i++) {
+    const ox = obstacles[i];
+    if (Math.abs(ox.x - px) < (ox.type === 'qianjin' ? PLAT.gapGate : PLAT.gapObs)) return false;
+  }
+  platforms.push({ x: px, rel: -PLAT.h });
+  if (!platTaught) {
+    platTaught = true;
+    hintText = '前方有高台——跳上去歇口气，还能甩掉追兵！'; hintT = 3; hintStory = false;
+  }
+  return true;
+}
+
+/* 玩家当前是否站在台面上（张钦甩尾等交互判定用） */
+function playerOnPlatform() { return !!(player && player.onGround && player.support); }
+
+/* v1.3.0 高台单向碰撞判定（位置比较法，可测纯函数）：返回本帧落上的平台或 null。
+   仅当「上一帧脚底整体在台面之上」且本帧下落穿过台面才站立——
+   不能只用 vy>0 当条件：跳跃弧线与平台重叠后再次下落但脚未达台面时必须继续穿透 */
+function platLandCheck(prevFoot) {
+  if (!player || player.vy <= 0) return null;
+  for (let pi = 0; pi < platforms.length; pi++) {
+    const p = platforms[pi];
+    const top = G + p.rel;
+    if (prevFoot <= top + 1 && player.y + PLAYER_H >= top &&
+        PLAYER_X + PLAYER_W > p.x + PLAT.edge && PLAYER_X < p.x + PLAT.w - PLAT.edge) return p;
+  }
+  return null;
+}
+
 function spawnObstacle() {
   let types;
   if (mode === 'endless') {
@@ -606,6 +660,12 @@ function spawnObstacle() {
   if (qjCool > 0) {
     types = types.filter(function (t) { return t !== 'qianjin'; });
   }
+  /* v1.3.0 高台互斥：①平台在场时滤掉奏折——fly 奏折固定高度 G-100 正落在台面（G-70）与
+     站台玩家（身高 57）的重叠区，台上玩家会被撞死；②新障碍与平台保持 gapObs 间距，防下台贴脸 */
+  if (platforms.length > 0 && Math.abs(platforms[0].x - (VW + 50)) < 200) {
+    types = types.filter(function (t) { return t !== 'zouzhe'; });
+  }
+  if (platforms.length > 0 && Math.abs(platforms[0].x - (VW + 50)) < PLAT.gapObs) return;
   const type = types[Math.floor(Math.random() * types.length)];
   /* v1.0.0 幕 3 教学点：本幕第一个障碍必为「锁」（hint 里教的正是它）
      v1.0.3 幕 4 教学点：本幕第一个障碍必为「张钦」并挂教学标（教「跳过他或引他撞障碍」） */
@@ -723,14 +783,37 @@ function updatePlay(dt) {
       player.vy += (JUMP_CUT - player.vy) * Math.min(1, dt * 14);
       if (player.vy >= JUMP_CUT) player.vy = JUMP_CUT;
     }
+    const prevFoot = player.y + PLAYER_H;   // v1.3.0 位置比较法：上一帧脚底高度
     player.vy += GRAVITY * dt;
     player.y += player.vy * dt;
     if (player.y >= G - PLAYER_H) {
       player.y = G - PLAYER_H;
       player.vy = 0;
       player.onGround = true;
+      player.support = null;
       player.landT = 0.10;                               // 落地压扁回弹（wip13：减半减短）
       dust(PLAYER_X + PLAYER_W / 2, G, 5);
+    } else {
+      /* v1.3.0 高台单向碰撞：位置比较法（判定逻辑在 platLandCheck，可测纯函数） */
+      const hitP = platLandCheck(prevFoot);
+      if (hitP) {
+        player.y = G + hitP.rel - PLAYER_H;
+        player.vy = 0;
+        player.onGround = true;
+        player.support = hitP;
+        player.landT = 0.10;
+        dust(PLAYER_X + PLAYER_W / 2, G + hitP.rel, 5);
+      }
+    }
+  } else if (player.support) {
+    /* v1.3.0 站在台面上：平台随世界左移，玩家固定 x——走出台缘即失去支撑下落（无 drop-through） */
+    const p = player.support;
+    if (!(PLAYER_X + PLAYER_W > p.x + PLAT.edge && PLAYER_X < p.x + PLAT.w - PLAT.edge)) {
+      player.onGround = false;
+      player.support = null;
+      player.cut = false;
+    } else if (Math.random() < dt * 6) {
+      dust(PLAYER_X + 4, G + p.rel, 1);
     }
   } else if (Math.random() < dt * 6) {
     dust(PLAYER_X + 4, G, 1);
@@ -757,6 +840,12 @@ function updatePlay(dt) {
   if (portrait) { ivMin += 0.1; ivMax += 0.15; }
   spawnT -= dt;
   if (qjCool > 0) qjCool -= dt;
+  /* v1.3.0 高台生成调度：无限模式 40 里后登场（2026-09-15 约定：先实测再配关卡） */
+  platT -= dt;
+  if (platT <= 0) {
+    platT = PLAT.interval[0] + Math.random() * (PLAT.interval[1] - PLAT.interval[0]);
+    if (mode === 'endless' && dist > PLAT.dist && !outro && platforms.length === 0) spawnPlatform();
+  }
   const nearGate = mode === 'level' && lv.gate && dist > lv.length - 1000;
   if (spawnT <= 0) {
     spawnT = ivMin + Math.random() * (ivMax - ivMin);
@@ -810,6 +899,13 @@ function updatePlay(dt) {
           o.chasing = false;
           o.shaken = true;
           hintText = '张钦追不上「大将军」，被远远甩在身后！'; hintT = 2; hintStory = true;
+        } else if (playerOnPlatform()) {
+          /* v1.3.0 高台甩尾：断锁发生在「上台」而非「下台」——失锁后张钦只剩世界流速左移，
+             玩家 x 固定，物理上永不再接近，玩家随时下台都安全。shaken 态随世界左移退场 + 痛哭帧 */
+          o.chasing = false;
+          o.shaken = true;
+          AudioSys.alert();
+          hintText = '张钦上不了高台，跟丢了！'; hintT = 2; hintStory = true;
         } else {
           o.chaseT += dt;
           if (o.cool > 0) o.cool -= dt;
@@ -856,7 +952,12 @@ function updatePlay(dt) {
     it.y = G + it.rel + Math.sin(it.bob * 4) * 4;
   }
   if (gate) gate.x -= mv;
+  /* v1.3.0 高台随世界左移（地形通道，与障碍同速——相对间距恒定，spawn 查一次全程有效） */
+  for (let pi = 0; pi < platforms.length; pi++) platforms[pi].x -= mv;
   obstacles = obstacles.filter(function (o) { return o.x > -60; });
+  /* v1.3.0 高台随世界左移；玩家脚下正踩的平台若被过滤会瞬间失去支撑——先摘支撑再过滤 */
+  if (player.support && player.support.x < -PLAT.w) player.support = null;
+  platforms = platforms.filter(function (p) { return p.x > -PLAT.w; });
   items = items.filter(function (it) { return it.x > -40 && !it.got; });
 
   /* 碰撞：道具 */
@@ -956,11 +1057,12 @@ function updatePlay(dt) {
   if (companion) {
     companion.animT += dt;
     if (companion.following) {
-      /* 贴身护驾：横坐标钉死在玩家身后，纵坐标与玩家同步（脚底对齐 → 玩家跳他也跳） */
+      /* 贴身护驾：横坐标钉死在玩家身后，纵坐标永远贴地面（v1.3.0：年迈太监不跳台——
+         玩家上台是独处喘息窗，谷大用在地面继续护驾；也避免伺服跟随台上高度的复杂化） */
       companion.x = PLAYER_X - COMP_FOLLOW_DX;
-      companion.y = player.y + (PLAYER_H - COMP_H);
-      companion.vy = player.vy;
-      companion.onGround = player.onGround;
+      companion.y = G - COMP_H;
+      companion.vy = 0;
+      companion.onGround = true;
     } else {
       companion.x -= mv;
       if (!companion.onGround) {
@@ -1293,11 +1395,12 @@ function drawZhangqin(x, y, t, o) {
   // 站立：优先 Zhangqin_standing.png（单帧）；缺失则回退到追击表首帧
   // 追击：Zhangqin.png（横排奔跑动画，帧数见 SHEET_FRAMES.zhangqin）
   const standImg = Sprites.map.zhangqin_standing || Sprites.map.zhangqin;
-  const img = chasing ? Sprites.map.zhangqin : standImg;
+  /* v1.3.0 被甩（高台跟丢/变身甩尾）：痛哭表 8 帧循环——被甩演出强化「追不上」的喜剧感 */
+  const img = (o && o.shaken && Sprites.map.cry) ? Sprites.map.cry : (chasing ? Sprites.map.zhangqin : standImg);
   if (img) {
-    const n = chasing ? SHEET_FRAMES.zhangqin : 1;     // 站立恒取单帧（首帧）
+    const n = (o && o.shaken && Sprites.map.cry) ? SHEET_FRAMES.cry : (chasing ? SHEET_FRAMES.zhangqin : 1);     // 站立恒取单帧（首帧）
     const fw = img.width / n;
-    const f = chasing ? (Math.floor(t * 10) % n) : 0;
+    const f = (o && o.shaken && Sprites.map.cry) ? (Math.floor(t * 8) % n) : (chasing ? (Math.floor(t * 10) % n) : 0);
     const scale = Math.min(bw / fw, bh / img.height);
     const dw = fw * scale, dh = img.height * scale;
     ctx.drawImage(img, f * fw, 0, fw, img.height, x + (bw - dw) / 2, y + (bh - dh) / 2, dw, dh);
@@ -1460,6 +1563,23 @@ function drawQianjin(o) {
     ctx.fillRect(bx, G - 3, QJ.w, 3);
   }
 }
+/* v1.3.0 高台绘制：薄板 + 垛口齿（无支撑柱——「薄板=可穿越」视觉惯例），暗紫基调 */
+function drawPlatforms() {
+  for (let i = 0; i < platforms.length; i++) {
+    const p = platforms[i];
+    const top = Math.floor(G + p.rel);
+    const x = Math.floor(p.x);
+    ctx.fillStyle = '#6b6472';                        // 板身
+    ctx.fillRect(x, top, PLAT.w, PLAT.th);
+    ctx.fillStyle = '#8a8292';                        // 顶面亮缘
+    ctx.fillRect(x, top, PLAT.w, 2);
+    ctx.fillStyle = '#6b6472';                        // 垛口齿 ×3
+    for (let t = 0; t < 3; t++) ctx.fillRect(x + 8 + t * 26, top - 5, 14, 5);
+    ctx.fillStyle = '#cfc8d8';                        // 底缘高亮：提示「这里是台面」
+    ctx.fillRect(x, top + PLAT.th, PLAT.w, 1);
+  }
+}
+
 function drawObstacles() {
   for (let i = 0; i < obstacles.length; i++) {
     const o = obstacles[i];
@@ -2112,6 +2232,7 @@ function render() {
     drawFinale();
   } else {
     drawGate();
+    drawPlatforms();
     drawObstacles();
     drawQjWarn();
     drawItems();
