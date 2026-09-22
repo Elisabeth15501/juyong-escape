@@ -315,13 +315,14 @@ const QJ = {
    敌台垛口薄板：X 轴永不阻挡；Y 轴仅当「上一帧脚底整体在台面之上」才可站立（位置比较法）。
    「薄板=可穿越」视觉惯例：板厚 ≤8px、无支撑柱，玩家一眼读懂单向语义。 */
 const PLAT = {
-  h: 70,                                       // 台面离地高（满跳顶点 197px 的 1/3，现有轻点跳即可上）
-  w: 80,                                       // 台宽（玩家穿越约 0.20-0.27s，短促的空中喘息窗）
+  h: 70,                                       // 台面离地高（现有轻点跳即可上）
+  w: 130,                                      // 台宽（wip3 80→130：落台窗口 ~0.33s；满跳 ~205px 仍可飞过，但落台更自然）
   th: 8,                                       // 板厚
   edge: 4,                                     // 台缘判定内缩（左右各 4px，防边缘擦碰）
-  interval: [7, 10],                           // 生成间隔（s）：平台是稀缺资源，频率最低档起步
+  sealChance: 0.65,                            // 台上放大将军印的概率（wip3：台上拾取引路，学 Temple Run 2「金币位置=操作提示」）
+  interval: [6, 9],                            // 生成间隔（s）：wip3 [7,10]→[6,9]，提高习惯曝光（先无限实测期）
   dist: 40 * 150,                              // 无限模式 40 里后登场（40*PX_PER_LI，先实测再配关卡）
-  gapObs: 140,                                 // 与地面障碍最小间距：台宽 80 + 落地缓冲 60
+  gapObs: 190,                                 // 与地面障碍最小间距：台宽 130 + 落地缓冲 60
   gapGate: 260                                 // 与千斤闸最小间距（= QJ.gap，闸叶全高会扫过台面，互斥）
 };
 /* 相位推进：o.phase 0=升 1=顶停 2=前摇 3=落闸；o.pt 拍内计时。进前摇/落闸播报音效（读时机关键通道） */
@@ -612,7 +613,13 @@ function spawnPlatform() {
     const ox = obstacles[i];
     if (Math.abs(ox.x - px) < (ox.type === 'qianjin' ? PLAT.gapGate : PLAT.gapObs)) return false;
   }
-  platforms.push({ x: px, rel: -PLAT.h });
+  const rel = -PLAT.h;
+  platforms.push({ x: px, rel: rel });
+  /* wip3 台上拾取引路：台面中央上方一枚大将军印——玩家为拾取主动落台/跑台，
+     学 Temple Run 2「金币位置=操作提示」，比教学文案更直觉地曝光上台机制 */
+  if (Math.random() < PLAT.sealChance) {
+    items.push({ x: px + PLAT.w / 2 - 9, rel: rel - 26, y: G + rel - 26, bob: Math.random() * 6, got: false });
+  }
   if (!platTaught) {
     platTaught = true;
     hintText = '前方有高台——跳上去歇口气，还能甩掉追兵！'; hintT = 3; hintStory = false;
