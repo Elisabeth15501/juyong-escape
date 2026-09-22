@@ -1057,12 +1057,12 @@ function updatePlay(dt) {
   if (companion) {
     companion.animT += dt;
     if (companion.following) {
-      /* 贴身护驾：横坐标钉死在玩家身后，纵坐标永远贴地面（v1.3.0：年迈太监不跳台——
-         玩家上台是独处喘息窗，谷大用在地面继续护驾；也避免伺服跟随台上高度的复杂化） */
+      /* 贴身护驾：横坐标钉死在玩家身后，纵坐标与玩家同步（脚底对齐 → 玩家跳他也跳，
+         v1.3.0-wip2 恢复跟跳：谷大用跟随上台，护驾在台上同样有效——忠实侍从寸步不离） */
       companion.x = PLAYER_X - COMP_FOLLOW_DX;
-      companion.y = G - COMP_H;
-      companion.vy = 0;
-      companion.onGround = true;
+      companion.y = player.y + (PLAYER_H - COMP_H);
+      companion.vy = player.vy;
+      companion.onGround = player.onGround;
     } else {
       companion.x -= mv;
       if (!companion.onGround) {
