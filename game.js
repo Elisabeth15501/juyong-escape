@@ -316,13 +316,18 @@ const QJ = {
    「薄板=可穿越」视觉惯例：板厚 ≤8px、无支撑柱，玩家一眼读懂单向语义。 */
 const PLAT = {
   h: 70,                                       // 台面离地高（现有轻点跳即可上）
-  w: 130,                                      // 台宽（wip3 80→130：落台窗口 ~0.33s；满跳 ~205px 仍可飞过，但落台更自然）
+  w: 130,                                      // 基准台宽（wip3 80→130；wip4 起为低速基准值，实际宽度按速度自适应）
+  wRef: 280,                                   // 宽度基准速（无限模式起步速 280px/s：低于此速不放大）
+  wGain: 0.54,                                 // 宽度增益：速度每快 1px/s 台宽 +0.54px——满跳滞空 0.68s 恒定，
+                                               // 落台时机窗 = (台宽+20)/速度，按此增益把窗口拉回恒定 ~0.54s
+  wMax: 300,                                   // 台宽上限（顶速 520+变身 15% ≈ 600px/s 时 → 300px）
+  snap: 24,                                    // 落台吸附带：下落中脚底距台面 ≤24px 且横向在台上 → 直接吸附落台
   th: 8,                                       // 板厚
   edge: 4,                                     // 台缘判定内缩（左右各 4px，防边缘擦碰）
   sealChance: 0.65,                            // 台上放大将军印的概率（wip3：台上拾取引路，学 Temple Run 2「金币位置=操作提示」）
   interval: [6, 9],                            // 生成间隔（s）：wip3 [7,10]→[6,9]，提高习惯曝光（先无限实测期）
   dist: 40 * 150,                              // 无限模式 40 里后登场（40*PX_PER_LI，先实测再配关卡）
-  gapObs: 190,                                 // 与地面障碍最小间距：台宽 130 + 落地缓冲 60
+  gapObs: 190,                                 // 与地面障碍最小间距：基准台宽 130 + 落地缓冲 60（宽台按实际 w 动态加 60）
   gapGate: 260                                 // 与千斤闸最小间距（= QJ.gap，闸叶全高会扫过台面，互斥）
 };
 /* 相位推进：o.phase 0=升 1=顶停 2=前摇 3=落闸；o.pt 拍内计时。进前摇/落闸播报音效（读时机关键通道） */
@@ -614,11 +619,15 @@ function spawnPlatform() {
     if (Math.abs(ox.x - px) < (ox.type === 'qianjin' ? PLAT.gapGate : PLAT.gapObs)) return false;
   }
   const rel = -PLAT.h;
-  platforms.push({ x: px, rel: rel });
+  /* wip4 速度自适应台宽：满跳滞空 0.68s 不随速度变，落台时机窗 = (台宽+20)/速度 会随提速缩水
+     （280px/s → 0.54s，520px/s → 0.29s）。生成时按当帧实测速度放大台宽，把窗口拉回恒定 ~0.54s——
+     高速大跳依然有完整的落台反应时间，而不是只能飞过去 */
+  const w = Math.round(Math.min(PLAT.wMax, PLAT.w + Math.max(0, speed - PLAT.wRef) * PLAT.wGain));
+  platforms.push({ x: px, rel: rel, w: w });
   /* wip3 台上拾取引路：台面中央上方一枚大将军印——玩家为拾取主动落台/跑台，
      学 Temple Run 2「金币位置=操作提示」，比教学文案更直觉地曝光上台机制 */
   if (Math.random() < PLAT.sealChance) {
-    items.push({ x: px + PLAT.w / 2 - 9, rel: rel - 26, y: G + rel - 26, bob: Math.random() * 6, got: false });
+    items.push({ x: px + w / 2 - 9, rel: rel - 26, y: G + rel - 26, bob: Math.random() * 6, got: false });
   }
   if (!platTaught) {
     platTaught = true;
@@ -632,14 +641,20 @@ function playerOnPlatform() { return !!(player && player.onGround && player.supp
 
 /* v1.3.0 高台单向碰撞判定（位置比较法，可测纯函数）：返回本帧落上的平台或 null。
    仅当「上一帧脚底整体在台面之上」且本帧下落穿过台面才站立——
-   不能只用 vy>0 当条件：跳跃弧线与平台重叠后再次下落但脚未达台面时必须继续穿透 */
+   不能只用 vy>0 当条件：跳跃弧线与平台重叠后再次下落但脚未达台面时必须继续穿透。
+   wip4 两条高速宽容：①判定宽度用平台实际 w（速度自适应定宽）；②吸附带——下落中脚底
+   距台面 ≤ PLAT.snap 且横向在台上时直接吸附落台（高速帧位移大，纯穿越判定时机过窄） */
 function platLandCheck(prevFoot) {
   if (!player || player.vy <= 0) return null;
   for (let pi = 0; pi < platforms.length; pi++) {
     const p = platforms[pi];
     const top = G + p.rel;
-    if (prevFoot <= top + 1 && player.y + PLAYER_H >= top &&
-        PLAYER_X + PLAYER_W > p.x + PLAT.edge && PLAYER_X < p.x + PLAT.w - PLAT.edge) return p;
+    const w = p.w || PLAT.w;
+    const foot = player.y + PLAYER_H;
+    if (PLAYER_X + PLAYER_W > p.x + PLAT.edge && PLAYER_X < p.x + w - PLAT.edge) {
+      if (prevFoot <= top + 1 && foot >= top) return p;              // 本帧穿越台面 → 站立
+      if (foot >= top - PLAT.snap && foot < top) return p;           // 吸附带内 → 提前吸附
+    }
   }
   return null;
 }
@@ -668,11 +683,12 @@ function spawnObstacle() {
     types = types.filter(function (t) { return t !== 'qianjin'; });
   }
   /* v1.3.0 高台互斥：①平台在场时滤掉奏折——fly 奏折固定高度 G-100 正落在台面（G-70）与
-     站台玩家（身高 57）的重叠区，台上玩家会被撞死；②新障碍与平台保持 gapObs 间距，防下台贴脸 */
-  if (platforms.length > 0 && Math.abs(platforms[0].x - (VW + 50)) < 200) {
+     站台玩家（身高 57）的重叠区，台上玩家会被撞死；②新障碍与平台保持间距（实际台宽+缓冲），
+     防下台贴脸。wip4：台宽随速度自适应，间距也按实际 w 动态算 */
+  if (platforms.length > 0 && Math.abs(platforms[0].x - (VW + 50)) < platforms[0].w + 70) {
     types = types.filter(function (t) { return t !== 'zouzhe'; });
   }
-  if (platforms.length > 0 && Math.abs(platforms[0].x - (VW + 50)) < PLAT.gapObs) return;
+  if (platforms.length > 0 && Math.abs(platforms[0].x - (VW + 50)) < platforms[0].w + 60) return;
   const type = types[Math.floor(Math.random() * types.length)];
   /* v1.0.0 幕 3 教学点：本幕第一个障碍必为「锁」（hint 里教的正是它）
      v1.0.3 幕 4 教学点：本幕第一个障碍必为「张钦」并挂教学标（教「跳过他或引他撞障碍」） */
@@ -815,7 +831,7 @@ function updatePlay(dt) {
   } else if (player.support) {
     /* v1.3.0 站在台面上：平台随世界左移，玩家固定 x——走出台缘即失去支撑下落（无 drop-through） */
     const p = player.support;
-    if (!(PLAYER_X + PLAYER_W > p.x + PLAT.edge && PLAYER_X < p.x + PLAT.w - PLAT.edge)) {
+    if (!(PLAYER_X + PLAYER_W > p.x + PLAT.edge && PLAYER_X < p.x + (p.w || PLAT.w) - PLAT.edge)) {
       player.onGround = false;
       player.support = null;
       player.cut = false;
@@ -963,8 +979,8 @@ function updatePlay(dt) {
   for (let pi = 0; pi < platforms.length; pi++) platforms[pi].x -= mv;
   obstacles = obstacles.filter(function (o) { return o.x > -60; });
   /* v1.3.0 高台随世界左移；玩家脚下正踩的平台若被过滤会瞬间失去支撑——先摘支撑再过滤 */
-  if (player.support && player.support.x < -PLAT.w) player.support = null;
-  platforms = platforms.filter(function (p) { return p.x > -PLAT.w; });
+  if (player.support && player.support.x < -PLAT.wMax) player.support = null;
+  platforms = platforms.filter(function (p) { return p.x > -PLAT.wMax; });
   items = items.filter(function (it) { return it.x > -40 && !it.got; });
 
   /* 碰撞：道具 */
@@ -1574,16 +1590,18 @@ function drawQianjin(o) {
 function drawPlatforms() {
   for (let i = 0; i < platforms.length; i++) {
     const p = platforms[i];
+    const w = p.w || PLAT.w;
     const top = Math.floor(G + p.rel);
     const x = Math.floor(p.x);
     ctx.fillStyle = '#6b6472';                        // 板身
-    ctx.fillRect(x, top, PLAT.w, PLAT.th);
+    ctx.fillRect(x, top, w, PLAT.th);
     ctx.fillStyle = '#8a8292';                        // 顶面亮缘
-    ctx.fillRect(x, top, PLAT.w, 2);
-    ctx.fillStyle = '#6b6472';                        // 垛口齿 ×3
-    for (let t = 0; t < 3; t++) ctx.fillRect(x + 8 + t * 26, top - 5, 14, 5);
+    ctx.fillRect(x, top, w, 2);
+    ctx.fillStyle = '#6b6472';                        // 垛口齿（wip4：宽台自动加密齿数，首尾对齐台缘）
+    const nTeeth = Math.max(3, Math.round(w / 65));
+    for (let t = 0; t < nTeeth; t++) ctx.fillRect(x + 8 + t * ((w - 22 - 14) / (nTeeth - 1)), top - 5, 14, 5);
     ctx.fillStyle = '#cfc8d8';                        // 底缘高亮：提示「这里是台面」
-    ctx.fillRect(x, top + PLAT.th, PLAT.w, 1);
+    ctx.fillRect(x, top + PLAT.th, w, 1);
   }
 }
 
