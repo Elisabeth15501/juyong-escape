@@ -334,8 +334,8 @@ const PLAT = {
   edge: 4,                                     // 台缘判定内缩（左右各 4px，防边缘擦碰）
   sealChance: 0.65,                            // 台上放大将军印的概率（wip3：台上拾取引路，学 Temple Run 2「金币位置=操作提示」）
   interval: [6, 9],                            // 生成间隔（s）：wip3 [7,10]→[6,9]，提高习惯曝光（先无限实测期）
-  dist: 40 * 150,                              // 无限模式 40 里后登场（40*PX_PER_LI，先实测再配关卡）
-  gapObs: 190,                                 // 与地面障碍最小间距：基准台宽 130 + 落地缓冲 60（宽台按实际 w 动态加 60）
+  dist: 20 * 150,                              // 无限模式 20 里后登场（wip5 40→20 里：更早建立「高台=第二路线」认知，先实测再配关卡）
+  gapObs: 190,                                 // 与飞行奏折最小间距（wip5 起地面障碍不再拒平台生成——平台可生成在障碍上方，见 spawnPlatform）
   gapGate: 260                                 // 与千斤闸最小间距（= QJ.gap，闸叶全高会扫过台面，互斥）
 };
 /* 相位推进：o.phase 0=升 1=顶停 2=前摇 3=落闸；o.pt 拍内计时。进前摇/落闸播报音效（读时机关键通道） */
@@ -622,9 +622,14 @@ function confirmAction() {
    平台与障碍同速左移、相对间距恒定，生成时查一次即可。冲突则本次放弃（等下一轮计时） */
 function spawnPlatform() {
   const px = VW + 50;
+  /* wip5 避障第二路线：地面障碍（侍卫44/锁20/张钦48，均 < 台高70，站台玩家天然免疫）
+     不再拒平台生成——平台照常生成在障碍上方/紧后方，玩家可跳上台面从头顶越过障碍，
+     而不是只能精准低跳。仍然互斥的两类：千斤闸（闸叶全高 240 扫过台面）与飞行奏折
+     （固定高度 G-100 正落在台面与站台玩家的重叠区） */
   for (let i = 0; i < obstacles.length; i++) {
     const ox = obstacles[i];
-    if (Math.abs(ox.x - px) < (ox.type === 'qianjin' ? PLAT.gapGate : PLAT.gapObs)) return false;
+    if (ox.type === 'qianjin' && Math.abs(ox.x - px) < PLAT.gapGate) return false;
+    if (ox.type === 'zouzhe' && Math.abs(ox.x - px) < PLAT.gapObs) return false;
   }
   const rel = -PLAT.h;
   /* wip4 速度自适应台宽：满跳滞空 0.68s 不随速度变，落台时机窗 = (台宽+20)/速度 会随提速缩水
@@ -639,7 +644,7 @@ function spawnPlatform() {
   }
   if (!platTaught) {
     platTaught = true;
-    hintText = '前方有高台——跳上去歇口气，还能甩掉追兵！'; hintT = 3; hintStory = false;
+    hintText = '前方有高台——跳上去能避开障碍、甩掉追兵！'; hintT = 3; hintStory = false;
   }
   return true;
 }
@@ -690,13 +695,22 @@ function spawnObstacle() {
   if (qjCool > 0) {
     types = types.filter(function (t) { return t !== 'qianjin'; });
   }
-  /* v1.3.0 高台互斥：①平台在场时滤掉奏折——fly 奏折固定高度 G-100 正落在台面（G-70）与
-     站台玩家（身高 57）的重叠区，台上玩家会被撞死；②新障碍与平台保持间距（实际台宽+缓冲），
-     防下台贴脸。wip4：台宽随速度自适应，间距也按实际 w 动态算 */
-  if (platforms.length > 0 && Math.abs(platforms[0].x - (VW + 50)) < platforms[0].w + 70) {
-    types = types.filter(function (t) { return t !== 'zouzhe'; });
+  /* v1.3.0 高台与障碍（wip5 修订：平台=避障第二路线）：
+     ①生成点落在台面正下方时，地面障碍（侍卫/锁/张钦）允许生成——玩家跳上高台即从头顶越过；
+     ②该窗口内飞行奏折与千斤闸仍滤除（奏折 G-100 撞站台玩家、闸叶全高扫台面），池空则放弃；
+     ③平台右缘外的落地缓冲带（60px）内仍拒绝一切生成，防下台贴脸；
+     ④平台近旁（+70px 内）仍滤奏折（斜落会扫到下落/落台玩家） */
+  if (platforms.length > 0) {
+    const p0 = platforms[0];
+    const sx = VW + 50;
+    if (sx >= p0.x && sx <= p0.x + p0.w) {
+      types = types.filter(function (t) { return t !== 'zouzhe' && t !== 'qianjin'; });
+      if (types.length === 0) return;
+    } else {
+      if (Math.abs(p0.x - sx) < p0.w + 60) return;
+      if (Math.abs(p0.x - sx) < p0.w + 70) types = types.filter(function (t) { return t !== 'zouzhe'; });
+    }
   }
-  if (platforms.length > 0 && Math.abs(platforms[0].x - (VW + 50)) < platforms[0].w + 60) return;
   const type = types[Math.floor(Math.random() * types.length)];
   /* v1.0.0 幕 3 教学点：本幕第一个障碍必为「锁」（hint 里教的正是它）
      v1.0.3 幕 4 教学点：本幕第一个障碍必为「张钦」并挂教学标（教「跳过他或引他撞障碍」） */
