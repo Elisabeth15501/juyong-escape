@@ -1,7 +1,9 @@
 'use strict';
 /* ============================================================
- * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.3.0）
+ * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.3.1）
  * ------------------------------------------------------------
+ * v1.3.1：修复「台尾必死」——千斤闸按台尾右缘区间判定（旧检查只量生成点，
+ *   宽台时闸可贴台尾 70px 生成）；飞行奏折落台缓冲 70→150px（下台前飞 ≈145px）
  * v1.3.0：高台（单向平台）——
  *   - 无限模式 40 里后登场（同屏 ≤1，与千斤闸互斥）
  *   - 单向碰撞：位置比较法（上一帧脚底在台面之上才站立）
@@ -336,6 +338,8 @@ const PLAT = {
   interval: [6, 9],                            // 生成间隔（s）：wip3 [7,10]→[6,9]，提高习惯曝光（先无限实测期）
   dist: 20 * 150,                              // 无限模式 20 里后登场（wip5 40→20 里：更早建立「高台=第二路线」认知，先实测再配关卡）
   gapObs: 190,                                 // 与飞行奏折最小间距（wip5 起地面障碍不再拒平台生成——平台可生成在障碍上方，见 spawnPlatform）
+  drop: 150,                                   // v1.3.1 落台飞行缓冲：下台坠落 70px 耗时 0.24s，顶速 600px/s 前飞 ≈145px——
+                                               // 飞行奏折不得落在台尾右缘外 150px 内，否则下台抛物线穿身（旧 70px 缓冲不够）
   gapGate: 260                                 // 与千斤闸最小间距（= QJ.gap，闸叶全高会扫过台面，互斥）
 };
 /* 相位推进：o.phase 0=升 1=顶停 2=前摇 3=落闸；o.pt 拍内计时。进前摇/落闸播报音效（读时机关键通道） */
@@ -628,7 +632,10 @@ function spawnPlatform() {
      （固定高度 G-100 正落在台面与站台玩家的重叠区） */
   for (let i = 0; i < obstacles.length; i++) {
     const ox = obstacles[i];
-    if (ox.type === 'qianjin' && Math.abs(ox.x - px) < PLAT.gapGate) return false;
+    /* v1.3.1 修复「闸贴台尾」：旧检查只量闸距平台生成点 px <260，但台宽最大 300——
+       闸可落在台尾右缘仅 70px 处（370-300），下台即撞闸叶。改为区间判定：
+       闸不得出现在 [px-260, px+wMax+260)——左端防闸与上台起跳弧叠、右端保台尾落地缓冲 */
+    if (ox.type === 'qianjin' && ox.x > px - PLAT.gapGate && ox.x < px + PLAT.wMax + PLAT.gapGate) return false;
     if (ox.type === 'zouzhe' && Math.abs(ox.x - px) < PLAT.gapObs) return false;
   }
   const rel = -PLAT.h;
@@ -695,20 +702,26 @@ function spawnObstacle() {
   if (qjCool > 0) {
     types = types.filter(function (t) { return t !== 'qianjin'; });
   }
-  /* v1.3.0 高台与障碍（wip5 修订：平台=避障第二路线）：
+  /* v1.3.0 高台与障碍（wip5 修订：平台=避障第二路线；v1.3.1 修复台尾必死）：
      ①生成点落在台面正下方时，地面障碍（侍卫/锁/张钦）允许生成——玩家跳上高台即从头顶越过；
-     ②该窗口内飞行奏折与千斤闸仍滤除（奏折 G-100 撞站台玩家、闸叶全高扫台面），池空则放弃；
-     ③平台右缘外的落地缓冲带（60px）内仍拒绝一切生成，防下台贴脸；
-     ④平台近旁（+70px 内）仍滤奏折（斜落会扫到下落/落台玩家） */
+     ②千斤闸实际生成点是屏外预警外缘 VW+QJ.warnDist（≠sx），按「闸点距平台右缘 ≥ QJ.gap」滤除——
+       旧检查用 sx=VW+50 完全量不到它，宽台(300)时闸可贴台尾 70px 生成；
+     ③飞行奏折缓冲右不对称：下台坠落 0.24s×顶速 600px/s 前飞 ≈145px，台尾外 150px 内拒生成
+       （旧 70px 缓冲留下 70~150px 盲区，下台抛物线穿身）；台面正下方与左缘 70px 内照旧滤除；
+     ④地面障碍的落地缓冲带（右缘外 60px）保留，防下台贴脸 */
   if (platforms.length > 0) {
     const p0 = platforms[0];
     const sx = VW + 50;
-    if (sx >= p0.x && sx <= p0.x + p0.w) {
-      types = types.filter(function (t) { return t !== 'zouzhe' && t !== 'qianjin'; });
+    const edgeR = p0.x + p0.w;
+    if (VW + QJ.warnDist - edgeR < QJ.gap) {
+      types = types.filter(function (t) { return t !== 'qianjin'; });
+    }
+    if (sx >= p0.x && sx <= edgeR) {
+      types = types.filter(function (t) { return t !== 'zouzhe'; });
       if (types.length === 0) return;
     } else {
       if (Math.abs(p0.x - sx) < p0.w + 60) return;
-      if (Math.abs(p0.x - sx) < p0.w + 70) types = types.filter(function (t) { return t !== 'zouzhe'; });
+      if (sx > p0.x - 70 && sx < edgeR + PLAT.drop) types = types.filter(function (t) { return t !== 'zouzhe'; });
     }
   }
   const type = types[Math.floor(Math.random() * types.length)];
