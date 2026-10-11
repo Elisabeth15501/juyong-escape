@@ -1,7 +1,9 @@
 'use strict';
 /* ============================================================
- * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.0-wip1.2）
+ * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.0-wip1.3）
  * ------------------------------------------------------------
+ * v1.4.0-wip1.3：功名簿纵向滚动——滚轮（桌面）/ 指针拖拽（触屏+鼠标共用）/
+ *     方向键·PgUp·PgDn 三通道，卡片区裁剪平移 + 滚动条指示，为成就扩充铺路
  * v1.4.0-wip1.2：成就「出关」→「驰赴应州」——无限模式约 590 明里（居庸关→宣府
  *     230 + 宣府→阳和 240，直取《皇明九边考》卷四驿路原文；阳和→应州战场约 120 里，
  *     现代公制 ÷ 明里 576m 交叉验证），对应朱厚照正德十二年真实行军路线
@@ -449,6 +451,9 @@ const ACH_KEY = 'ming_escape_ach';
 let achUnlocked = {};
 try { achUnlocked = JSON.parse(store.get(ACH_KEY) || '{}') || {}; } catch (e) { achUnlocked = {}; }
 let achToast = null;              // 当前展示的解锁横幅 { id, t }（t 剩余秒数）
+let achScroll = 0;                // v1.4.0-wip1.3 功名簿纵向滚动偏移（游戏坐标 px）
+let achScrollMax = 0;             // 本帧绘制的最大可滚动量（内容超出视口时 > 0）
+let achDragY = null;              // 功名簿拖拽滚动：指针上一帧 Y（屏幕坐标），null = 未在拖拽
 function achSave() { store.set(ACH_KEY, JSON.stringify(achUnlocked)); }
 function unlockAch(id) {
   if (!ACH[id] || achUnlocked[id]) return false;
@@ -644,15 +649,37 @@ canvas.addEventListener('pointerdown', function (e) {
   const r = canvas.getBoundingClientRect();
   const lx = (e.clientX - r.left) / r.width * VW;
   const ly = (e.clientY - r.top) / r.height * VH;
+  if (state === 'menu' && menuPage === 'ach') achDragY = e.clientY;   // 功名簿：记录拖拽起点（松手清除）
   handleTap(lx, ly);
 });
-canvas.addEventListener('pointerup', function (e) { e.preventDefault(); releaseJump(); });
+canvas.addEventListener('pointerup', function (e) {
+  e.preventDefault();
+  achDragY = null;
+  releaseJump();
+});
+/* v1.4.0-wip1.3 功名簿滚动三通道：滚轮（桌面）/ 指针拖拽（触屏+鼠标共用）/ 方向键 */
+canvas.addEventListener('wheel', function (e) {
+  if (state !== 'menu' || menuPage !== 'ach') return;
+  e.preventDefault();
+  achScroll += e.deltaY > 0 ? 40 : -40;
+}, { passive: false });
+canvas.addEventListener('pointermove', function (e) {
+  if (achDragY === null) return;
+  const r = canvas.getBoundingClientRect();
+  achScroll += (achDragY - e.clientY) * (VH / r.height);   // 屏幕像素差换算到游戏坐标
+  achDragY = e.clientY;
+});
 
 window.addEventListener('keydown', function (e) {
   if (e.code === 'KeyP' || e.code === 'Escape') {
     e.preventDefault();
     togglePause();
     return;
+  }
+  /* 功名簿页：方向键 / PgUp·PgDn 滚动（v1.4.0-wip1.3） */
+  if (state === 'menu' && menuPage === 'ach') {
+    if (e.code === 'ArrowDown' || e.code === 'PageDown') { e.preventDefault(); achScroll += e.code === 'PageDown' ? 120 : 36; return; }
+    if (e.code === 'ArrowUp' || e.code === 'PageUp') { e.preventDefault(); achScroll -= e.code === 'PageUp' ? 120 : 36; return; }
   }
   if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
     e.preventDefault();
@@ -2412,7 +2439,7 @@ function drawMenu() {
   button(VW / 2 - 90, portrait ? 224 : 108, 180, 30, '出关记 · 八幕选关', function () { menuPage = 'levels'; }, true);
   button(VW / 2 - 90, portrait ? 262 : 146, 180, 30, '居庸关 · 无限跑酷', startEndless, false);
   /* v1.4.0 功名簿：成就展示页入口 */
-  button(VW / 2 - 90, portrait ? 300 : 184, 180, 24, '功名簿 · 成就', function () { menuPage = 'ach'; }, false);
+  button(VW / 2 - 90, portrait ? 300 : 184, 180, 24, '功名簿 · 成就', function () { menuPage = 'ach'; achScroll = 0; }, false);
   button(VW / 2 - 90, portrait ? 334 : 216, 180, 22, '教学播报：' + (hintsOn ? '开' : '关'), toggleHints, false);
   ctx.fillStyle = '#8a86a0';
   ctx.font = '9px sans-serif';
@@ -2490,13 +2517,27 @@ function drawAchPage() {
   const cardH = portrait ? 84 : 158;
   const y0 = portrait ? 104 : 66;
   const gx0 = (VW - (cardW * cols + gap * (cols - 1))) / 2;
+  const rowH = cardH + (portrait ? 12 : 0);
+  const rows = Math.ceil(ids.length / cols);
+  const btnY = portrait ? VH - 92 : VH - 32;
+  const viewH = btnY - 10 - y0;
+  /* v1.4.0-wip1.3 滚动量收敛：每帧按实际内容高度夹取，滚轮/拖拽/按键随便改，画出来永远合法 */
+  achScrollMax = Math.max(0, rows * rowH - viewH);
+  if (achScroll > achScrollMax) achScroll = achScrollMax;
+  if (achScroll < 0) achScroll = 0;
+  /* 卡片区裁剪 + 纵向平移：卡片滚出视口的部分不压表头、不压返回键 */
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, y0 - 4, VW, viewH + 8);
+  ctx.clip();
+  ctx.translate(0, -achScroll);
   for (let i = 0; i < ids.length; i++) {
     const a = ACH[ids[i]];
     const got = !!achUnlocked[ids[i]];
     const col = portrait ? 0 : i % cols;
     const row = portrait ? i : Math.floor(i / cols);
     const x = gx0 + col * (cardW + gap);
-    const y = y0 + row * (cardH + (portrait ? 12 : 0));
+    const y = y0 + row * rowH;
     const cx = x + cardW / 2;
     ctx.fillStyle = got ? 'rgba(60,46,10,0.55)' : 'rgba(20,24,34,0.7)';
     ctx.fillRect(x, y, cardW, cardH);
@@ -2516,7 +2557,17 @@ function drawAchPage() {
     ctx.font = 'bold 9px sans-serif';
     ctx.fillText(got ? '已解锁' : '未解锁', cx, y + cardH - 8);
   }
-  button(VW / 2 - 70, portrait ? VH - 92 : VH - 32, 140, 28, '◀ 返回', function () { menuPage = 'main'; }, false);
+  ctx.restore();
+  /* 滚动条指示（内容未超出视口时不画） */
+  if (achScrollMax > 0) {
+    const th = Math.max(18, Math.floor(viewH * viewH / (rows * rowH)));
+    const ty = y0 + Math.floor((viewH - th) * (achScroll / achScrollMax));
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fillRect(VW - 7, y0, 4, viewH);
+    ctx.fillStyle = '#8a8fa0';
+    ctx.fillRect(VW - 7, ty, 4, th);
+  }
+  button(VW / 2 - 70, btnY, 140, 28, '◀ 返回', function () { menuPage = 'main'; }, false);
 }
 
 /* ---------- 总渲染 ---------- */
