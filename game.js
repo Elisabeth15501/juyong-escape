@@ -1,7 +1,9 @@
 'use strict';
 /* ============================================================
- * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.0-wip1）
+ * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.0-wip1.1）
  * ------------------------------------------------------------
+ * v1.4.0-wip1.1：功名簿响应式重排——桌面横屏三列并排 / 移动竖屏单列分行，
+ *     卡内「名/简/述/状态」四行固定轨道，修复横屏描述·状态·返回按钮三重叠印
  * v1.4.0-wip1：成就系统（功名簿）+ 杨廷和占位小人——
  *   - 平台无关成就引擎（ACH 条件表 + unlockAch + 本地存档）：为 TapTap/Steam 上架铺路，
  *     游戏逻辑只发埋点，换平台只换存储适配层（saveAdapter 语义），引擎与展示复用
@@ -2456,7 +2458,9 @@ function drawLevelSelect() {
 }
 
 /* v1.4.0 功名簿 · 成就展示页：解锁项金框金字，未解锁灰态（描述仍然可见——给玩家目标感）。
-   清档（容器清缓存）后成就重新可达，不做任何依赖存档的一次性内容 */
+   清档（容器清缓存）后成就重新可达，不做任何依赖存档的一次性内容。
+   响应式双布局（wip1.1）：桌面横屏三列并排（480×270 竖向稀缺，横向摊开不再挤压）；
+   移动竖屏单列分行。卡内固定「名 / 简 / 述 / 状态」四行轨道，杜绝文字叠印 */
 function drawAchPage() {
   drawBackground(MENU_BG);
   ctx.fillStyle = 'rgba(8,10,18,0.55)';
@@ -2464,36 +2468,46 @@ function drawAchPage() {
   ctx.textAlign = 'center';
   ctx.fillStyle = '#ffd76a';
   ctx.font = 'bold 15px sans-serif';
-  ctx.fillText('功名簿 · 成就', VW / 2, portrait ? 66 : 40);
+  ctx.fillText('功名簿 · 成就', VW / 2, portrait ? 66 : 34);
   const ids = Object.keys(ACH);
   let done = 0;
   for (let i = 0; i < ids.length; i++) if (achUnlocked[ids[i]]) done++;
   ctx.fillStyle = '#8a86a0';
   ctx.font = '9px sans-serif';
-  ctx.fillText('已解锁 ' + done + ' / ' + ids.length, VW / 2, portrait ? 84 : 56);
-  const rowH = portrait ? 94 : 54;
-  const y0 = portrait ? 104 : 70;
+  ctx.fillText('已解锁 ' + done + ' / ' + ids.length, VW / 2, portrait ? 84 : 50);
+  const cols = portrait ? 1 : 3;
+  const gap = portrait ? 0 : 16;
+  const cardW = portrait ? VW - 48 : Math.floor((VW - 48 - gap * (cols - 1)) / cols);
+  const cardH = portrait ? 84 : 158;
+  const y0 = portrait ? 104 : 66;
+  const gx0 = (VW - (cardW * cols + gap * (cols - 1))) / 2;
   for (let i = 0; i < ids.length; i++) {
     const a = ACH[ids[i]];
     const got = !!achUnlocked[ids[i]];
-    const y = y0 + i * rowH;
-    const ph = rowH - 12;
+    const col = portrait ? 0 : i % cols;
+    const row = portrait ? i : Math.floor(i / cols);
+    const x = gx0 + col * (cardW + gap);
+    const y = y0 + row * (cardH + (portrait ? 12 : 0));
+    const cx = x + cardW / 2;
     ctx.fillStyle = got ? 'rgba(60,46,10,0.55)' : 'rgba(20,24,34,0.7)';
-    ctx.fillRect(24, y, VW - 48, ph);
+    ctx.fillRect(x, y, cardW, cardH);
     ctx.strokeStyle = got ? '#d4a017' : '#4a4658';
     ctx.lineWidth = 1;
-    ctx.strokeRect(24.5, y + 0.5, VW - 49, ph - 1);
+    ctx.strokeRect(x + 0.5, y + 0.5, cardW - 1, cardH - 1);
     ctx.fillStyle = got ? '#ffd76a' : '#8a86a0';
     ctx.font = 'bold 12px sans-serif';
-    ctx.fillText((got ? '◆ ' : '◇ ') + a.name, VW / 2, y + 18);
+    ctx.fillText((got ? '◆ ' : '◇ ') + a.name, cx, y + (portrait ? 18 : 24));
+    ctx.fillStyle = got ? '#c9a53e' : '#6a6680';
+    ctx.font = '8px sans-serif';
+    ctx.fillText(a.short, cx, y + (portrait ? 30 : 38));
     ctx.fillStyle = got ? '#e8e4d8' : '#6a6680';
     ctx.font = '9px sans-serif';
-    wrapText(a.desc, VW / 2, y + 34, VW - 64, 13);
+    wrapText(a.desc, cx, y + (portrait ? 44 : 54), cardW - 14, portrait ? 13 : 12);
     ctx.fillStyle = got ? '#9fe8b8' : '#55516a';
     ctx.font = 'bold 9px sans-serif';
-    ctx.fillText(got ? '已解锁' : '未解锁', VW / 2, y + ph - 8);
+    ctx.fillText(got ? '已解锁' : '未解锁', cx, y + cardH - 8);
   }
-  button(VW / 2 - 70, portrait ? VH - 92 : VH - 58, 140, 28, '◀ 返回', function () { menuPage = 'main'; }, false);
+  button(VW / 2 - 70, portrait ? VH - 92 : VH - 32, 140, 28, '◀ 返回', function () { menuPage = 'main'; }, false);
 }
 
 /* ---------- 总渲染 ---------- */
