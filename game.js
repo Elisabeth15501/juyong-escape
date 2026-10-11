@@ -1,7 +1,12 @@
 'use strict';
 /* ============================================================
- * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.0-wip1.3）
+ * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.0-wip2）
  * ------------------------------------------------------------
+ * v1.4.0-wip2：杨廷和弹幕实装（师生互动）——projectiles 弹幕底座（弹种注册表，
+ *     moshu 预留 v1.5.0 梁储）+ 四态时间驱动状态机（入画→开讲→移疾→退场）+
+ *     三问固定循环批注（贴地=跳/半空=别跳，朱渍影落点读位，掷笔双音）+
+ *     讲席减速带 + 变身无效（以臣名君，点破不暗算）+ 护驾挡批注（讲席-3s）；
+ *     成就三级奔袭链：夜趋宣府 230 里 / 阳和督师 470 里 / 驰赴应州 590 里
  * v1.4.0-wip1.3：功名簿纵向滚动——滚轮（桌面）/ 指针拖拽（触屏+鼠标共用）/
  *     方向键·PgUp·PgDn 三通道，卡片区裁剪平移 + 滚动条指示，为成就扩充铺路
  * v1.4.0-wip1.2：成就「出关」→「驰赴应州」——无限模式约 590 明里（居庸关→宣府
@@ -128,6 +133,9 @@ const AudioSys = {
   /* 千斤闸（v1.2.0）：前摇 = 铁链绞盘咔哒（读时机的听觉通道）；落闸 = 闷雷砸地 */
   gateTele: function () { this.tone(150, 0.07, 'square', 0.06); this.tone(150, 0.07, 'square', 0.06, 0.1); this.tone(150, 0.07, 'square', 0.06, 0.2); },
   gateSlam: function () { this.tone(65, 0.22, 'sawtooth', 0.11, 0, 38); this.tone(200, 0.08, 'square', 0.05, 0.01, 90); },
+  /* 掷笔双音（v1.4.0-wip2）：低「笃」= 贴地批注（跳），高「唰」= 半空批注（别跳）——前摇即节拍器 */
+  zhubiLow: function () { this.tone(120, 0.16, 'sine', 0.14, 0, 55); },
+  zhubiHigh: function () { this.tone(900, 0.18, 'square', 0.05, 0, 1700); },
   clear: function () { this.tone(523, 0.12, 'square', 0.07); this.tone(659, 0.12, 'square', 0.07, 0.12); this.tone(784, 0.2, 'square', 0.07, 0.24); },
   cry: function () { this.tone(392, 0.5, 'triangle', 0.06, 0, 330); this.tone(311, 0.8, 'triangle', 0.06, 0.6, 250); },
   /* 出关号角：上行大调琶音（出关是通关，不是碰撞） */
@@ -420,7 +428,8 @@ let qjCool = 0;                         // v1.2.0-wip4 千斤闸登场冷却（s
 let platforms = [];                     // v1.3.0 高台（单向平台）：{ x: 屏幕x, rel: 相对地面负偏移（防旋转） }
 let platT = 0;                          // 高台生成计时器（s）
 let platTaught = false;                 // 高台首见教学（每会话一次，不随跑重置）
-let yang = null;                        // v1.4.0 杨廷和（幕5 讲席段）：{ x, st, t }，不参与碰撞
+let yang = null;                        // v1.4.0 杨廷和（幕5 讲席段）：{ x, state, st, t, lectureT, cursor, leaveT }
+let projectiles = [];                   // v1.4.0-wip2 批注弹幕：{ kind, x, y, w, h, warn, t }（梁储 moshu 复用此数组）
 let hintText = '';
 let hintStory = false;   // v1.0.3 提示双通道：剧情播报（true）不受提示开关屏蔽，教学提示（false）受 hintsOn 控制
 let endlessBest = parseInt(store.get('ming_escape_best') || '0', 10) || 0;
@@ -445,6 +454,8 @@ function unlockAct(i) {
 const ACH = {
   weiwu:   { name: '威武大将军', short: '初通八幕', desc: '初次通过关卡模式全八关' },
   feiren:  { name: '中国人能飞', short: '越过飞行奏折', desc: '在关卡或无限模式跳过一枚正在飞行的奏折（幕 5 掉落的不算）' },
+  xuanfu:  { name: '夜趋宣府', short: '奔袭二百三十里', desc: '在无限模式奔袭 230 明里（约 132 公里），经岔道、榆林、怀来、土木、保安、鸡鸣六驿直抵宣府——朱厚照微服出关后的第一个驻跸之地' },
+  yanghe:  { name: '阳和督师', short: '奔袭四百七十里', desc: '在无限模式奔袭 470 明里（约 271 公里），经万全左卫、怀安、天城三卫直抵阳和卫——应州之战的前线大营，十月丁未朱厚照在此亲督诸军' },
   yingzhou: { name: '驰赴应州', short: '奔袭五百九十里', desc: '在无限模式奔袭约 590 明里，沿朱厚照行军路线（居庸关→宣府→阳和→应州）直抵应州之战战场' }
 };
 const ACH_KEY = 'ming_escape_ach';
@@ -470,6 +481,11 @@ function unlockAch(id) {
    《读史方舆纪要》应州「府南一百二十里」旁证大同盆地里距）。
    1 明里 = 360 步 = 1800 营造尺，营造尺 0.32m → 1 里 ≈ 0.576 公里 */
 function yingzhouReached(px) { return px >= 590 * PX_PER_LI; }
+/* 三级奔袭链（同一驿路、同一出处，累计里程逐级解锁）：
+   夜趋宣府 230 里（居庸关→宣府，六驿）、《皇明九边考》卷四原文逐驿累加 */
+function xuanfuReached(px) { return px >= 230 * PX_PER_LI; }
+/* 阳和督师 470 里（居庸关→阳和，宣府段四卫），同上前 230 里 + 60×4 */
+function yangheReached(px) { return px >= 470 * PX_PER_LI; }
 /* 成就「中国人能飞」判定（可测纯函数）：
    水平重叠期间玩家脚底整体高于奏折飞行带（G-100）= 从其头顶越过 → 'crossed'；
    过身后（奏折右缘越出玩家左缘）→ 'pass'。教学说「别跳」，但满跳（顶点 197px）
@@ -485,17 +501,93 @@ function feirenCheck(o, playerY) {
   return null;
 }
 
-/* ---------- 杨廷和 · 幕5 讲席段（v1.4.0-wip1 占位 + 参考动作）----------
- * 四态：候讲（持笏肃立）→ 开讲（抬手展卷）→ 移疾（拱背按腰）→ 退场（拂袖快步）
- * 按计划书：讲席段 = 幕5 进度 35%~78%；登场不动、不碰撞、不致死（弹种 wip2 接入）。
- * 正史锚点：出关当口杨廷和丁忧在家不在场，戏份全在关外叙事前的京中段（幕5 奏折雨） */
-const YANG_SEG = { enter: 0.35, speak: 0.45, ill: 0.62, leave: 0.72 };
+/* ---------- 杨廷和 · 幕5 讲席段（v1.4.0-wip2 弹幕实装）----------
+ * 「以老师身份压着朱厚照」的互动模型（时间压力型，与张钦/梁储的空间压力错位）：
+ *   ① 老师不动：入画站定后不移动、不碰撞致死——玩家必须从他身前「路过课堂」；
+ *   ② 批注即提问：三问固定循环（可背拍）——贴地批注（朱笔扫地）= 跳，
+ *      半空批注（朱笔当头）= 别跳；玩家用身体动作「回答」老师的批注，答错（撞上）即死；
+ *   ③ 上课减速：开讲期间全场减速 YANG.slow——「讲课的时候谁都别想跑」；
+ *   ④ 以臣名君：变身朱寿无效——照讲照批，提示明示（Nioh 3 式假安全窗点破，不做暗算）；
+ *   ⑤ 护驾挡批注：谷大用可替陛下挡 1 次批注，挡后讲席缩短（「被搅了局」）。
+ * 军规来源（计划书 §二）：循环可背拍(Cuphead) / 反应窗 ≥0.6s(Cuphead 洋葱 0.67s) /
+ * 判定窗放宽(NecroDancer) / 前摇即节拍器(掷笔双音) / 假安全窗点破(Nioh 3) */
+const YANG_SEG = { enter: 0.35 };    // 幕5 进度 ≥35% 入画（讲席结束由时长驱动，不锁进度）
+const YANG = {
+  x: 0.62,          // 站位（VW 比例）——他站在路上等你经过，玩家从其身前跑过
+  slow: 0.85,       // 开讲减速系数（标准档；v1.7.0 三档配置化时并入 YANG.diff）
+  warn: 1.2,        // 朱渍影显影时长（s）：落点提前读位（Jetpack 定时事件范式，≥0.6s 军规×2）
+  duration: 12,     // 讲席时长（s）：站定开讲 → 引疾移疾
+  leaveBoost: 55    // 退场拂袖额外离场速度（px/s）
+};
+/* 批注弹种注册表（弹幕底座 v1.4.0 正式建立，v1.5.0 梁储墨弹复用）：
+   zhubi 朱批（幕5 · 杨廷和）：low 贴地带 / high 半空带，跳与不跳由弹带决定；
+   moshu 墨弹（v1.5.0 梁储预留）：追驾笏板/奏疏，弹种动词「必须跳」——接口预留不实现 */
+const PROJ_DEF = {
+  zhubi: {
+    w: 20, kill: true,
+    lowOff: 34, lowH: 34,    // 贴地带：[G-34, G]（满跳 apex 140px 轻松越过）
+    highOff: 107, highH: 24  // 半空带：[G-107, G-83]（玩家身高 57，头顶 G-57，穿行余量 26px）
+  }
+};
+/* 三问固定循环（可背拍，学 Cuphead 拳套循环；绝对时间线，开讲起算）：
+   第一问「贴地×2」→ 第二问「半空×2」→ 第三问「交替」；波间天然含 ≥1.5s 喘息。
+   玩家第二遍进幕 5 就能背拍——压力来源从「反应」转为「执行背好的拍」 */
+const YANG_SEQ = [
+  { t: 0.8, kind: 'low' }, { t: 2.7, kind: 'low' },
+  { t: 5.2, kind: 'high' }, { t: 7.1, kind: 'high' },
+  { t: 9.6, kind: 'low' }, { t: 11.2, kind: 'high' }
+];
 function yangShouldSpawn(distPx, lvLen) { return distPx >= lvLen * YANG_SEG.enter; }
-function yangState(seg) {
-  if (seg >= YANG_SEG.leave) return 3;
-  if (seg >= YANG_SEG.ill) return 2;
-  if (seg >= YANG_SEG.speak) return 1;
-  return 0;
+/* 批注弹带（可测纯函数）：kind → 世界坐标碰撞盒 { y, h } */
+function projBand(kind) {
+  const d = PROJ_DEF.zhubi;
+  return kind === 'high' ? { y: G - d.highOff, h: d.highH } : { y: G - d.lowOff, h: d.lowH };
+}
+/* 掷批注：从杨廷和身前掷出，随世界左移；半空批注先显影朱渍影（落点读位）再判死 */
+function yangThrow(kind) {
+  const band = projBand(kind);
+  projectiles.push({
+    kind: kind, x: yang.x - 24, y: band.y, w: PROJ_DEF.zhubi.w, h: band.h,
+    warn: kind === 'high' ? YANG.warn : YANG.warn * 0.6,   // 贴地批注可直接目视，显影减半
+    t: 0
+  });
+  if (kind === 'high') AudioSys.zhubiHigh(); else AudioSys.zhubiLow();   // 前摇即节拍器：低笃=跳 高唰=别跳
+}
+/* 杨廷和四态推进（每帧调用）：enter 入画 → lecture 开讲（减速+掷批注）→ leave 移疾退场
+   时间驱动（duration 12s），不锁进度——讲席中玩家减速慢行，进度自然落后 */
+function yangAdvance(mv, dt) {
+  if (!yang) return;
+  yang.t += dt;
+  if (yang.state === 'enter') {
+    yang.st = 0;                                          // 候讲：持笏肃立随世界卷动入画
+    yang.x -= mv;
+    if (yang.x <= VW * YANG.x) {
+      yang.x = VW * YANG.x;
+      yang.state = 'lecture';
+      yang.lectureT = 0;
+      /* 讲席清场：既有 zouzhe 全清（含掉落型），生成暂停见 spawnObstacle 调用处——保住幕5「喘」的定位 */
+      obstacles = obstacles.filter(function (o) { return o.type !== 'zouzhe'; });
+      hintText = '杨阁老当道开讲——听讲！'; hintT = 2.5; hintStory = false;
+      AudioSys.alert();
+    }
+  } else if (yang.state === 'lecture') {
+    yang.st = 1;                                          // 开讲：展卷授课
+    yang.lectureT += dt;
+    while (yang.cursor < YANG_SEQ.length && yang.lectureT >= YANG_SEQ[yang.cursor].t) {
+      yangThrow(YANG_SEQ[yang.cursor].kind);
+      yang.cursor++;
+    }
+    if (yang.lectureT >= YANG.duration) {
+      yang.state = 'leave';
+      yang.leaveT = 0;
+      hintText = '杨廷和引疾不入——「教过皇帝读书的老师，在路上等他。」'; hintT = 3; hintStory = true;
+    }
+  } else if (yang.state === 'leave') {
+    yang.leaveT += dt;
+    yang.st = yang.leaveT < 0.8 ? 2 : 3;                  // 移疾拱背 → 拂袖快步
+    yang.x -= mv + (yang.st === 3 ? YANG.leaveBoost : 0) * dt;
+    if (yang.x < -80) yang = null;
+  }
 }
 
 /* ---------- 画布与自适应布局 ---------- */
@@ -589,6 +681,7 @@ function resetRun() {
   spawnCount = 0;
   qjCool = 0;
   yang = null;
+  projectiles = [];
   paused = false;
 }
 
@@ -924,6 +1017,8 @@ function updatePlay(dt) {
   if (mode === 'endless') baseSpeed = 280 + Math.min(240, dist / 60);
   else baseSpeed = lv.speed * (assist ? 0.85 : 1);   // v1.0.3 幕1辅助：死亡≥3次放慢 15%
   speed = baseSpeed * SF * (transformT > 0 ? 1.15 : 1);
+  /* v1.4.0-wip2 讲席减速带：开讲期间全场减速——「上课的时候谁都别想跑」（只作用于 lecturing） */
+  if (yang && yang.state === 'lecture') speed *= YANG.slow;
 
   /* 出关演出：世界继续滚动，玩家驰出门洞；变身形态冻结；数秒后进终章字幕 */
   if (outro) {
@@ -995,12 +1090,16 @@ function updatePlay(dt) {
 
   dist += speed * dt;
 
-  /* v1.4.0 成就「出关」：无限模式奔袭 150 里 */
-  if (mode === 'endless' && yingzhouReached(dist)) unlockAch('yingzhou');
+  /* v1.4.0-wip2 三级奔袭链：宣府 230 → 阳和 470 → 应州 590（明里，出关驿路累计） */
+  if (mode === 'endless') {
+    if (xuanfuReached(dist)) unlockAch('xuanfu');
+    if (yangheReached(dist)) unlockAch('yanghe');
+    if (yingzhouReached(dist)) unlockAch('yingzhou');
+  }
 
-  /* v1.4.0 杨廷和登场：幕5 讲席段 35% 起（占位小人，不参与碰撞；弹种 wip2 接入） */
+  /* v1.4.0-wip2 杨廷和登场：幕5 讲席段 35% 起入画（弹幕师生互动见 yangAdvance） */
   if (mode === 'level' && levelIndex === 4 && !yang && !outro && yangShouldSpawn(dist, lv.length)) {
-    yang = { x: VW + 40, st: 0, t: 0 };
+    yang = { x: VW + 40, state: 'enter', st: 0, t: 0, lectureT: 0, cursor: 0, leaveT: 0 };
   }
 
   /* 障碍生成节奏（竖屏放慢速度 → 间隔略放宽） */
@@ -1025,7 +1124,7 @@ function updatePlay(dt) {
   const nearGate = mode === 'level' && lv.gate && dist > lv.length - 1000;
   if (spawnT <= 0) {
     spawnT = ivMin + Math.random() * (ivMax - ivMin);
-    if (!nearGate && !outro) spawnObstacle();
+    if (!nearGate && !outro && !(yang && yang.state === 'lecture')) spawnObstacle();   // 讲席段奏折暂停生成（wip2）
   }
 
   /* 随机大将军印：仅无限模式。关卡模式的印一律走 sealAt 剧情印——
@@ -1134,12 +1233,15 @@ function updatePlay(dt) {
   if (gate) gate.x -= mv;
   /* v1.3.0 高台随世界左移（地形通道，与障碍同速——相对间距恒定，spawn 查一次全程有效） */
   for (let pi = 0; pi < platforms.length; pi++) platforms[pi].x -= mv;
-  /* v1.4.0 杨廷和四态推进：按幕5 进度切态；退场态拂袖加快离场（额外 55px/s） */
-  if (yang) {
-    yang.t += dt;
-    yang.st = yangState(dist / lv.length);
-    yang.x -= mv + (yang.st === 3 ? 55 : 0) * dt;
-    if (yang.x < -80) yang = null;
+  /* v1.4.0-wip2 杨廷和四态推进：时间驱动状态机（入画→开讲减速+掷批注→移疾退场） */
+  yangAdvance(mv, dt);
+  /* v1.4.0-wip2 批注弹幕推进：随世界左移；warn 期为朱渍影显影（不判定） */
+  for (let pi2 = projectiles.length - 1; pi2 >= 0; pi2--) {
+    const pj = projectiles[pi2];
+    pj.t += dt;
+    if (pj.warn > 0) pj.warn -= dt;
+    pj.x -= mv;
+    if (pj.x < -40) projectiles.splice(pi2, 1);
   }
   obstacles = obstacles.filter(function (o) { return o.x > -60; });
   /* v1.3.0 高台随世界左移；玩家脚下正踩的平台若被过滤会瞬间失去支撑——先摘支撑再过滤 */
@@ -1209,6 +1311,35 @@ function updatePlay(dt) {
     }
   }
   obstacles = obstacles.filter(function (o) { return !o.dead; });
+
+  /* 碰撞：批注弹幕（v1.4.0-wip2）——杨廷和的杀招全在弹幕，本人不碰撞 */
+  for (let pi3 = projectiles.length - 1; pi3 >= 0; pi3--) {
+    const pj = projectiles[pi3];
+    if (pj.warn > 0) continue;                          // 朱渍影显影期不判定（读位时间）
+    if (!rectsOverlap(pr, pj)) continue;
+    if (transformT > 0) {
+      /* 变身朱寿：批注被撞散，但讲席照常——以臣名君，变身只免这一下、结束不了这堂课 */
+      projectiles.splice(pi3, 1);
+      burst(pj.x + pj.w / 2, pj.y + pj.h / 2, 10, '#e05a4a');
+      AudioSys.smash();
+      continue;
+    }
+    if (companion && companion.following) {
+      /* 谷大用护驾：替陛下挡 1 次批注，讲席缩短 3s（「被搅了局」） */
+      projectiles.splice(pi3, 1);
+      companion = null;
+      if (yang && yang.state === 'lecture') yang.lectureT += 3;
+      burst(pj.x + pj.w / 2, pj.y + pj.h / 2, 14, '#e05a4a');
+      burst(companion.x + COMP_W / 2, companion.y + COMP_H / 2, 10, '#d8d0e8');
+      AudioSys.smash();
+      AudioSys.hit();
+      shakeT = 0.2;
+      hintText = '谷大用挡下批注：「阁老息怒，陛下这就听讲！」'; hintT = 2.5; hintStory = true;
+      continue;
+    }
+    die();
+    return;
+  }
 
   /* ---------- 谷大用（ companion 护驾） ----------
    * 规则：幕 3 起、关卡中段（默认 45%，可用 lv.compAt 覆写）从右侧入画；无限模式随机出现。
@@ -1358,6 +1489,11 @@ function pickupSeal() {
   player.form = 'zhushou';
   shakeT = 0.15;
   burst(PLAYER_X + PLAYER_W / 2, player.y + PLAYER_H / 2, 16, '#ffd76a');
+  /* v1.4.0-wip2 以臣名君：讲席中变身无效——照讲照批，提示明示（点破不暗算）。
+     与张钦的关键差异：张钦被变身撞碎（shaken），杨廷和讲席照常——你逃不出课堂 */
+  if (yang && yang.state === 'lecture') {
+    hintText = '杨廷和头也不抬：「你叫什么，老臣都认得——你是皇帝。」'; hintT = 3; hintStory = true;
+  }
 }
 
 function die() {
@@ -1770,6 +1906,25 @@ function drawPlatforms() {
   }
 }
 
+/* v1.4.0-wip2 批注弹幕绘制：warn 期 = 朱渍影落点显影（半空批注地面投影闪烁）；
+   生效期 = 朱红批注小卷（三色弹种系统：批注朱红 / 奏折米白 / 墨弹墨黑预留） */
+function drawProjectiles() {
+  for (let i = 0; i < projectiles.length; i++) {
+    const p = projectiles[i];
+    if (p.warn > 0) {
+      const a = 0.22 + 0.16 * Math.sin(p.t * 10);
+      ctx.fillStyle = 'rgba(224,90,74,' + a.toFixed(2) + ')';
+      ctx.fillRect(p.x - 6, G - 4, p.w + 12, 4);
+      continue;
+    }
+    ctx.fillStyle = '#e05a4a';
+    ctx.fillRect(p.x, p.y, p.w, p.h);
+    ctx.fillStyle = '#b03a2e';
+    ctx.fillRect(p.x + 2, p.y + 1, p.w - 4, 2);
+    ctx.fillStyle = '#fff0e0';
+    ctx.fillRect(p.x + 4, p.y + p.h - 3, p.w - 8, 2);
+  }
+}
 function drawObstacles() {
   for (let i = 0; i < obstacles.length; i++) {
     const o = obstacles[i];
@@ -2593,6 +2748,7 @@ function render() {
     /* v1.4.0 杨廷和：讲席人物画在障碍层之下（背景人物，玩家从其身前跑过） */
     if (yang) drawYang(Math.floor(yang.x), G, yang.t, yang.st);
     drawObstacles();
+    drawProjectiles();
     drawQjWarn();
     drawItems();
     if (companion) drawGudayong(Math.floor(companion.x), Math.floor(companion.y), companion.animT, companion);
