@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>杨廷和 · 占位小人动作参考（v1.4.0-wip1）</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #17151d;
+    color: #d8d4e0;
+    font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    padding: 28px 20px 60px;
+    max-width: 960px;
+    margin: 0 auto;
+  }
+  h1 { color: #e7c26a; font-size: 22px; margin-bottom: 6px; }
+  .sub { color: #8a86a0; font-size: 12px; margin-bottom: 24px; line-height: 1.7; }
+  .grid { display: flex; flex-wrap: wrap; gap: 16px; }
+  .card {
+    background: #201d29;
+    border: 1px solid #34304442;
+    border-radius: 10px;
+    padding: 14px 16px;
+    flex: 1 1 210px;
+    min-width: 210px;
+  }
+  .card h2 { color: #e7c26a; font-size: 15px; margin-bottom: 2px; }
+  .card .en { color: #8a86a0; font-size: 11px; margin-bottom: 10px; }
+  .card canvas { display: block; margin: 0 auto; image-rendering: pixelated; background: #262233; border-radius: 6px; }
+  .card p { font-size: 12px; color: #b8b4c8; margin-top: 10px; line-height: 1.7; }
+  .card code { color: #ffd76a; font-family: Consolas, monospace; font-size: 11px; }
+  .section { margin-top: 34px; }
+  .section h2 { color: #e7c26a; font-size: 16px; margin-bottom: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid #3a3650; padding: 6px 12px; text-align: left; }
+  th { color: #e7c26a; font-weight: 600; background: #201d29; }
+  td { color: #b8b4c8; }
+  .chip { display: inline-block; width: 14px; height: 14px; vertical-align: -2px; margin-right: 6px; border: 1px solid #55506a; border-radius: 3px; }
+  .note {
+    margin-top: 26px; background: #241f2e; border-left: 3px solid #e7c26a;
+    padding: 12px 16px; font-size: 12px; color: #b8b4c8; line-height: 1.9; border-radius: 0 8px 8px 0;
+  }
+  .note b { color: #ffd76a; }
+  /* 隐藏游戏本体画布（参考页只需引入 game.js 复用绘制函数） */
+  #game { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="game" width="360" height="640"></canvas>
+
+<h1>杨廷和 · 占位小人动作参考</h1>
+<div class="sub">
+  juyong_escape v1.4.0-wip1 · 幕 5 讲席段（进度 35%~78%）· 内阁首辅<br>
+  本页由游戏内 <code>drawYang()</code> 实时渲染，与游戏画面完全一致 —— 画正式角色设计时以此为动作基准。<br>
+  精灵规格：Yangtinghe.png 四帧横排，64×64/帧，顺序 = 候讲 → 开讲 → 移疾 → 退场（放入目录即自动替换占位绘制）。
+</div>
+
+<div class="grid">
+  <div class="card">
+    <h2>态 0 · 候讲</h2>
+    <div class="en">st=0 · 持笏肃立</div>
+    <canvas id="c0" width="192" height="150"></canvas>
+    <p>双手捧笏板竖在胸前，双目闭目养神，并步直立。讲席开始前（进度 35%~45%）的等待姿态。</p>
+  </div>
+  <div class="card">
+    <h2>态 1 · 开讲</h2>
+    <div class="en">st=1 · 抬手展卷</div>
+    <canvas id="c1" width="192" height="150"></canvas>
+    <p>右臂抬起将经卷举至头侧，左臂按书，<b style="color:#ffd76a">双目圆睁</b>（唯一睁眼态），躯干微扬。讲学中（45%~62%）。</p>
+  </div>
+  <div class="card">
+    <h2>态 2 · 移疾</h2>
+    <div class="en">st=2 · 拱背按腰</div>
+    <canvas id="c2" width="192" height="150"></canvas>
+    <p>左手按腰后撑、右手垂抚胸前，拱背、躯干整体下沉 4px，仍闭目。上疏乞归（62%~72%）。</p>
+  </div>
+  <div class="card">
+    <h2>态 3 · 退场</h2>
+    <div class="en">st=3 · 拂袖快步</div>
+    <canvas id="c3" width="192" height="150"></canvas>
+    <p>右臂前甩拂袖，迈步（左前右后），躯干前倾 2px。致仕离场（72% 之后向左走出画面）。</p>
+  </div>
+</div>
+
+<div class="section">
+  <h2>色板（占位配色，正式设计可沿用色相）</h2>
+  <table>
+    <tr><th>部位</th><th>色值</th><th>说明</th></tr>
+    <tr><td><span class="chip" style="background:#8f2333"></span>红袍（躯干/袍袖）</td><td><code>#8f2333</code></td><td>首辅服色，比张钦绯袍深两档</td></tr>
+    <tr><td><span class="chip" style="background:#b8434f"></span>领缘</td><td><code>#b8434f</code></td><td>领口提亮一行</td></tr>
+    <tr><td><span class="chip" style="background:#d4a017"></span>玉带</td><td><code>#d4a017</code></td><td>腰带金饰</td></tr>
+    <tr><td><span class="chip" style="background:#e8cfa8"></span>皮肤</td><td><code>#e8cfa8</code></td><td>手部/面部</td></tr>
+    <tr><td><span class="chip" style="background:#e8e4dc"></span>白发白须</td><td><code>#e8e4dc</code></td><td>正德朝 60+ 老臣</td></tr>
+    <tr><td><span class="chip" style="background:#141420"></span>乌纱帽 + 帽翅</td><td><code>#141420</code></td><td>左右帽翅各 5×2</td></tr>
+    <tr><td><span class="chip" style="background:#26263a"></span>裤 / 靴</td><td><code>#26263a</code> / <code>#101018</code></td><td>深色官靴</td></tr>
+    <tr><td><span class="chip" style="background:#c8b078"></span>笏板</td><td><code>#c8b078</code></td><td>候讲态手持</td></tr>
+    <tr><td><span class="chip" style="background:#f5f0e0"></span>经卷</td><td><code>#f5f0e0</code></td><td>开讲态高举</td></tr>
+  </table>
+</div>
+
+<div class="note">
+  <b>设定锚点（画正式稿时保持）：</b>① 不参与碰撞 —— 讲席人物画在障碍层之下，玩家从其身前跑过；② 登场不动、不致死，批注弹种由 wip2 接入；③ 身高约 58 逻辑像素（64×64 帧内顶部留 6px 余量给帽翅）；④ 唯一睁眼态是「开讲」，其余闭目 —— 这是三问对答段落玩家辨别他状态的辅助信号。
+</div>
+
+<script src="./game.js?v=1.4.0-wip1"></script>
+<script>
+(function () {
+  var states = [
+    { id: 'c0', st: 0, t: 0 },
+    { id: 'c1', st: 1, t: 0 },
+    { id: 'c2', st: 2, t: 0 },
+    { id: 'c3', st: 3, t: 0 }
+  ];
+  for (var i = 0; i < states.length; i++) {
+    (function (cfg) {
+      var cv = document.getElementById(cfg.id);
+      var g = cv.getContext('2d');
+      g.imageSmoothingEnabled = false;
+      function render() {
+        g.clearRect(0, 0, cv.width, cv.height);
+        /* 地面参考线 */
+        g.fillStyle = '#302b40';
+        g.fillRect(0, 128, cv.width, 22);
+        g.fillStyle = '#4a4460';
+        g.fillRect(0, 128, cv.width, 2);
+        g.save();
+        g.scale(2.4, 2.4);
+        drawYang(28, 53.3, cfg.t, cfg.st, g);
+        g.restore();
+      }
+      render();
+      /* 缓慢呼吸式计时推进，与游戏内 t 参数语义一致 */
+      setInterval(function () { cfg.t += 0.1; render(); }, 200);
+    })(states[i]);
+  }
+})();
+</script>
+</body>
+</html>

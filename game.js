@@ -1,7 +1,15 @@
 'use strict';
 /* ============================================================
- * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.3.3）
+ * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.0-wip1）
  * ------------------------------------------------------------
+ * v1.4.0-wip1：成就系统（功名簿）+ 杨廷和占位小人——
+ *   - 平台无关成就引擎（ACH 条件表 + unlockAch + 本地存档）：为 TapTap/Steam 上架铺路，
+ *     游戏逻辑只发埋点，换平台只换存储适配层（saveAdapter 语义），引擎与展示复用
+ *   - 首批三成就：威武大将军（初通关卡模式全八关）/ 中国人能飞（腾空越过飞行奏折，
+ *     幕 5 掉落型不计）/ 出关（无限模式 150 里 ≈ 60 公里 · 紫禁城到居庸关的明代里程）
+ *   - 主菜单新增「功名簿 · 成就」展示页 + 游戏内解锁横幅 toast
+ *   - 幕 5 讲席段（35% 起）杨廷和占位小人：候讲/开讲/移疾/退场四态参考动作，
+ *     不参与碰撞（弹种 wip2 接入）；支持 Yangtinghe.png 四帧横排替换
  * v1.3.3：台尾坠落带速度自适应——带宽 = 0.76×speed + 150（满跳离台滞空 0.76s，
  *   落点随速度线性外移；顶速 600 → 606px）。旧固定 300px 在高速下盖不住满跳落点
  * v1.3.2：高台共存规则 v2——平台在场期间不生成千斤闸/飞行奏折（规则级互斥，
@@ -119,7 +127,7 @@ const AudioSys = {
 };
 
 /* ---------- 精灵表加载（缺失自动回退代码占位绘制） ---------- */
-const SHEET_FRAMES = { zhuhouzhao: 4, zhushou: 4, shiwei: 1, zhangqin: 4, zhangqin_standing: 1, yin: 1, cry: 8, gudayong_standing: 1, gudayong_moving: 4 };
+const SHEET_FRAMES = { zhuhouzhao: 4, zhushou: 4, shiwei: 1, zhangqin: 4, zhangqin_standing: 1, yin: 1, cry: 8, gudayong_standing: 1, gudayong_moving: 4, yang: 4 };
 const Sprites = {
   map: {},
   load: function () {
@@ -133,6 +141,7 @@ const Sprites = {
       cry: 'Zhangqin_crying.png',
       gudayong_standing: 'Gudayong_standing.png',   // 站立态（未被玩家碰触前）
       gudayong_moving: 'Gudayong_moving.png',       // 跟随态（4 帧奔跑循环）
+      yang: 'Yangtinghe.png',                        // 杨廷和（4 帧横排：候讲/开讲/移疾/退场，v1.4.0）
       bg_palace: 'scene_palace.png',
       bg_road: 'scene_road.png',
       bg_pass: 'scene_pass.png'
@@ -403,6 +412,7 @@ let qjCool = 0;                         // v1.2.0-wip4 千斤闸登场冷却（s
 let platforms = [];                     // v1.3.0 高台（单向平台）：{ x: 屏幕x, rel: 相对地面负偏移（防旋转） }
 let platT = 0;                          // 高台生成计时器（s）
 let platTaught = false;                 // 高台首见教学（每会话一次，不随跑重置）
+let yang = null;                        // v1.4.0 杨廷和（幕5 讲席段）：{ x, st, t }，不参与碰撞
 let hintText = '';
 let hintStory = false;   // v1.0.3 提示双通道：剧情播报（true）不受提示开关屏蔽，教学提示（false）受 hintsOn 控制
 let endlessBest = parseInt(store.get('ming_escape_best') || '0', 10) || 0;
@@ -417,6 +427,59 @@ let tutorUsed = false;          // v1.0.3 幕1教学：首个地面障碍挂起�
 let assist = false;             // v1.0.3 幕1辅助模式（本幕累计死亡≥3次自动开启，节奏放慢）
 function unlockAct(i) {
   if (i > unlockedActs) { unlockedActs = i; store.set('ming_escape_unlocked', String(unlockedActs)); }
+}
+
+/* ---------- 成就系统（v1.4.0「功名簿」）----------
+ * 平台无关设计（为 TapTap / Steam 上架铺路）：
+ *   - 游戏逻辑只在关键节点调用 unlockAch / feirenCheck / chuguanReached，不感知存储与展示
+ *   - 解锁状态持久化走 store（小红书容器本地存储）；换平台只替换这一层，引擎与埋点复用
+ *   - 容器「数据不保证永久持久化」：清档后成就可重新达成，没有任何内容依赖成就存档才可触达 */
+const ACH = {
+  weiwu:   { name: '威武大将军', short: '初通八幕', desc: '初次通过关卡模式全八关' },
+  feiren:  { name: '中国人能飞', short: '越过飞行奏折', desc: '在关卡或无限模式跳过一枚正在飞行的奏折（幕 5 掉落的不算）' },
+  chuguan: { name: '出关', short: '无限 150 里', desc: '在无限模式奔袭 150 里（约 60 公里 · 紫禁城到居庸关）' }
+};
+const ACH_KEY = 'ming_escape_ach';
+let achUnlocked = {};
+try { achUnlocked = JSON.parse(store.get(ACH_KEY) || '{}') || {}; } catch (e) { achUnlocked = {}; }
+let achToast = null;              // 当前展示的解锁横幅 { id, t }（t 剩余秒数）
+function achSave() { store.set(ACH_KEY, JSON.stringify(achUnlocked)); }
+function unlockAch(id) {
+  if (!ACH[id] || achUnlocked[id]) return false;
+  achUnlocked[id] = 1;
+  achSave();
+  achToast = { id: id, t: 3.2 };
+  AudioSys.transform();           // 复用变身号角：解锁是荣耀时刻
+  return true;
+}
+/* 成就「出关」阈值（可测纯函数）：150 里 ≈ 60 公里（紫禁城→居庸关的明代陆路里程） */
+function chuguanReached(px) { return px >= 150 * PX_PER_LI; }
+/* 成就「中国人能飞」判定（可测纯函数）：
+   水平重叠期间玩家脚底整体高于奏折飞行带（G-100）= 从其头顶越过 → 'crossed'；
+   过身后（奏折右缘越出玩家左缘）→ 'pass'。教学说「别跳」，但满跳（顶点 197px）
+   恰能从 100px 高的飞行奏折头顶掠过——敢于打破教学直觉的玩家应得此成就。
+   撞上即死不会走到结算；掉落型奏折（o.fall，幕 5）全程不计 */
+function feirenCheck(o, playerY) {
+  if (!o || o.type !== 'zouzhe' || o.fall) return null;
+  const d = OBST_DEF.zouzhe;
+  const bandTop = G - FLY_OBST_OFFSET;
+  if (o.airCrossed) return (o.x + d.w < PLAYER_X) ? 'pass' : 'crossed';
+  const overl = PLAYER_X + PLAYER_W > o.x && PLAYER_X < o.x + d.w;
+  if (overl && playerY + PLAYER_H <= bandTop) { o.airCrossed = true; return 'crossed'; }
+  return null;
+}
+
+/* ---------- 杨廷和 · 幕5 讲席段（v1.4.0-wip1 占位 + 参考动作）----------
+ * 四态：候讲（持笏肃立）→ 开讲（抬手展卷）→ 移疾（拱背按腰）→ 退场（拂袖快步）
+ * 按计划书：讲席段 = 幕5 进度 35%~78%；登场不动、不碰撞、不致死（弹种 wip2 接入）。
+ * 正史锚点：出关当口杨廷和丁忧在家不在场，戏份全在关外叙事前的京中段（幕5 奏折雨） */
+const YANG_SEG = { enter: 0.35, speak: 0.45, ill: 0.62, leave: 0.72 };
+function yangShouldSpawn(distPx, lvLen) { return distPx >= lvLen * YANG_SEG.enter; }
+function yangState(seg) {
+  if (seg >= YANG_SEG.leave) return 3;
+  if (seg >= YANG_SEG.ill) return 2;
+  if (seg >= YANG_SEG.speak) return 1;
+  return 0;
 }
 
 /* ---------- 画布与自适应布局 ---------- */
@@ -509,6 +572,7 @@ function resetRun() {
   zouzheCueStage = 0;
   spawnCount = 0;
   qjCool = 0;
+  yang = null;
   paused = false;
 }
 
@@ -893,6 +957,14 @@ function updatePlay(dt) {
 
   dist += speed * dt;
 
+  /* v1.4.0 成就「出关」：无限模式奔袭 150 里 */
+  if (mode === 'endless' && chuguanReached(dist)) unlockAch('chuguan');
+
+  /* v1.4.0 杨廷和登场：幕5 讲席段 35% 起（占位小人，不参与碰撞；弹种 wip2 接入） */
+  if (mode === 'level' && levelIndex === 4 && !yang && !outro && yangShouldSpawn(dist, lv.length)) {
+    yang = { x: VW + 40, st: 0, t: 0 };
+  }
+
   /* 障碍生成节奏（竖屏放慢速度 → 间隔略放宽） */
   let ivMin, ivMax;
   if (mode === 'endless') {
@@ -943,10 +1015,14 @@ function updatePlay(dt) {
   }
 
   const mv = speed * dt;
+  /* 玩家碰撞盒：道具拾取 / 障碍碰撞共用 */
+  const pr = { x: PLAYER_X + 3, y: player.y + 3, w: PLAYER_W - 6, h: PLAYER_H - 5 };
   for (let i = 0; i < obstacles.length; i++) {
     const o = obstacles[i];
     o.x -= mv; o.t += dt;
     if (o.type === 'qianjin') qjAdvance(o, dt);   // v1.2.0 千斤闸四拍相位机（含前摇/落闸音效与落闸扬尘）
+    /* v1.4.0 成就埋点「中国人能飞」：从飞行奏折头顶掠过（幕 5 掉落型不计） */
+    if (feirenCheck(o, player.y) === 'pass') unlockAch('feiren');
     /* v1.0.0 幕 5 掉落型奏折：加速下坠，落地成路障（扬尘提示） */
     if (o.fall && !o.landed) {
       o.vy += 1400 * dt;
@@ -1020,14 +1096,20 @@ function updatePlay(dt) {
   if (gate) gate.x -= mv;
   /* v1.3.0 高台随世界左移（地形通道，与障碍同速——相对间距恒定，spawn 查一次全程有效） */
   for (let pi = 0; pi < platforms.length; pi++) platforms[pi].x -= mv;
+  /* v1.4.0 杨廷和四态推进：按幕5 进度切态；退场态拂袖加快离场（额外 55px/s） */
+  if (yang) {
+    yang.t += dt;
+    yang.st = yangState(dist / lv.length);
+    yang.x -= mv + (yang.st === 3 ? 55 : 0) * dt;
+    if (yang.x < -80) yang = null;
+  }
   obstacles = obstacles.filter(function (o) { return o.x > -60; });
   /* v1.3.0 高台随世界左移；玩家脚下正踩的平台若被过滤会瞬间失去支撑——先摘支撑再过滤 */
   if (player.support && player.support.x < -PLAT.wMax) player.support = null;
   platforms = platforms.filter(function (p) { return p.x > -PLAT.wMax; });
   items = items.filter(function (it) { return it.x > -40 && !it.got; });
 
-  /* 碰撞：道具 */
-  const pr = { x: PLAYER_X + 3, y: player.y + 3, w: PLAYER_W - 6, h: PLAYER_H - 5 };
+  /* 碰撞：道具（pr 已在障碍移动循环前定义，成就埋点共用） */
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     if (!it.got && rectsOverlap(pr, { x: it.x, y: it.y, w: 18, h: 18 })) {
@@ -1157,6 +1239,8 @@ function updatePlay(dt) {
   if (gate && !gateDone && gate.x <= PLAYER_X + PLAYER_W) {
     gateDone = true;
     unlockAct(levelIndex + 1);
+    /* v1.4.0 成就「威武大将军」：初次通过关卡模式全八关（末幕出关即达成，与变身撞门演出无关） */
+    if (levelIndex === LEVELS.length - 1) unlockAch('weiwu');
     if (transformT > 0) {
       finaleSmashed = true;
       gate.broken = true;
@@ -1865,6 +1949,93 @@ function drawGudayong(x, y, t, c) {
     ctx.fillText('护驾', x + 15, y - 7);
   }
 }
+/* v1.4.0 杨廷和（内阁首辅 · 幕5 讲席）：占位小人 + 四态参考动作。
+   候讲=持笏肃立（st0）/ 开讲=抬手展卷（st1）/ 移疾=拱背按腰（st2）/ 退场=拂袖快步（st3）。
+   优先 Yangtinghe.png 四帧横排（64×64/帧，顺序同上）；缺失则代码占位绘制。
+   不参与碰撞：讲席人物非障碍，玩家从其身前跑过（wip2 起接入批注弹种与讲席交互）。
+   造型锚点：红袍（首辅服色，比张钦绯袍深两档）· 乌纱帽 + 帽翅 · 白发白须（正德朝 60+ 老臣）· 玉带 */
+function drawYang(x, groundY, t, st, g) {
+  const c = g || ctx;                                    // 外部（动作参考页）可传入独立画布上下文
+  const img = Sprites.map.yang;
+  if (img) {
+    const n = SHEET_FRAMES.yang;
+    const fw = img.width / n;
+    const dh = 58;
+    const dw = fw * dh / img.height;
+    c.drawImage(img, st * fw, 0, fw, img.height, x + (32 - dw) / 2, groundY - dh, dw, dh);
+    return;
+  }
+  const hunch = st === 2 ? 4 : 0;                        // 移疾：拱背，躯干整体下沉
+  const lean = st === 3 ? -2 : (st === 1 ? 1 : 0);       // 退场前倾 / 开讲微扬
+  const yy = groundY - hunch;
+  /* 乌纱帽 + 帽翅 */
+  c.fillStyle = '#141420';
+  c.fillRect(x + 8 + lean, yy - 52, 13, 6);
+  c.fillRect(x + 3 + lean, yy - 51, 5, 2);
+  c.fillRect(x + 21 + lean, yy - 51, 5, 2);
+  /* 脸 + 白发白须 */
+  c.fillStyle = '#e8cfa8';
+  c.fillRect(x + 10 + lean, yy - 46, 9, 8);
+  c.fillStyle = '#e8e4dc';
+  c.fillRect(x + 10 + lean, yy - 40, 8, 6);
+  /* 眼：开讲凝目圆睁，其余闭目养神 */
+  c.fillStyle = '#301810';
+  if (st === 1) { c.fillRect(x + 11 + lean, yy - 44, 2, 2); c.fillRect(x + 15 + lean, yy - 44, 2, 2); }
+  else { c.fillRect(x + 11 + lean, yy - 43, 2, 1); c.fillRect(x + 15 + lean, yy - 43, 2, 1); }
+  /* 红袍躯干（移疾拱背时下摆拉长补足落地） */
+  c.fillStyle = '#8f2333';
+  c.fillRect(x + 5 + lean, yy - 34, 19, 24 + hunch);
+  c.fillStyle = '#b8434f';
+  c.fillRect(x + 5 + lean, yy - 32, 19, 2);            // 领缘
+  c.fillStyle = '#d4a017';
+  c.fillRect(x + 5 + lean, yy - 18, 19, 2);            // 玉带
+  /* 四态手臂与道具 */
+  if (st === 0) {
+    /* 候讲：双手捧笏，笏板竖在胸前 */
+    c.fillStyle = '#c8b078';
+    c.fillRect(x + 13 + lean, yy - 31, 4, 13);
+    c.fillStyle = '#e8cfa8';
+    c.fillRect(x + 12 + lean, yy - 20, 3, 3);
+    c.fillRect(x + 16 + lean, yy - 20, 3, 3);
+  } else if (st === 1) {
+    /* 开讲：右臂抬起展卷（经卷举至头侧），左臂按书 */
+    c.fillStyle = '#8f2333';
+    c.fillRect(x + 21 + lean, yy - 42, 3, 9);          // 抬臂袍袖
+    c.fillStyle = '#e8cfa8';
+    c.fillRect(x + 22 + lean, yy - 45, 3, 3);          // 手
+    c.fillStyle = '#f5f0e0';
+    c.fillRect(x + 25 + lean, yy - 49, 8, 4);          // 经卷
+    c.fillStyle = '#e8cfa8';
+    c.fillRect(x + 7 + lean, yy - 26, 3, 3);           // 左手
+  } else if (st === 2) {
+    /* 移疾：左手按腰后撑，右手垂抚胸前 */
+    c.fillStyle = '#8f2333';
+    c.fillRect(x + 23 + lean, yy - 24, 4, 3);          // 后撑袍袖
+    c.fillStyle = '#e8cfa8';
+    c.fillRect(x + 26 + lean, yy - 23, 3, 3);          // 按腰手
+    c.fillRect(x + 8 + lean, yy - 24, 3, 3);           // 抚胸手
+  } else {
+    /* 退场：拂袖（右臂前甩）+ 迈步（左前右后） */
+    c.fillStyle = '#8f2333';
+    c.fillRect(x + lean - 2, yy - 28, 8, 3);           // 前甩袍袖
+    c.fillStyle = '#e8cfa8';
+    c.fillRect(x + lean - 5, yy - 28, 3, 3);           // 前伸手
+    c.fillStyle = '#26263a';
+    c.fillRect(x + 7, yy - 12, 5, 12);
+    c.fillRect(x + 16, yy - 9, 5, 9);
+    c.fillStyle = '#101018';
+    c.fillRect(x + 6, yy - 3, 7, 3);
+    c.fillRect(x + 15, yy - 3, 7, 3);
+    return;                                              // 迈步腿已画，跳过公共腿部
+  }
+  /* 公共腿部（候讲/开讲/移疾：并步站立） */
+  c.fillStyle = '#26263a';
+  c.fillRect(x + 8, yy - 10, 5, 10 + hunch);
+  c.fillRect(x + 16, yy - 10, 5, 10 + hunch);
+  c.fillStyle = '#101018';
+  c.fillRect(x + 7, yy + hunch - 3, 7, 3);
+  c.fillRect(x + 15, yy + hunch - 3, 7, 3);
+}
 function drawGate() {
   if (!gate) return;
   const x = Math.floor(gate.x);
@@ -2220,21 +2391,23 @@ function drawMenu() {
   ctx.textAlign = 'center';
   ctx.fillStyle = '#ffd76a';
   ctx.font = 'bold 10px sans-serif';
-  ctx.fillText('正德十二年·逃', VW / 2, portrait ? 120 : 52);
+  ctx.fillText('正德十二年·逃', VW / 2, portrait ? 120 : 40);
   ctx.fillStyle = '#ffffff';
   ctx.font = 'bold 26px sans-serif';
-  ctx.fillText('朱厚照出居庸关', VW / 2, portrait ? 158 : 84);
+  ctx.fillText('朱厚照出居庸关', VW / 2, portrait ? 158 : 66);
   ctx.fillStyle = '#b8b4c8';
   ctx.font = '10px sans-serif';
-  ctx.fillText('一场说走就走的出走 · 八幕完整篇章', VW / 2, portrait ? 184 : 104);
-  button(VW / 2 - 90, portrait ? 240 : 128, 180, 30, '出关记 · 八幕选关', function () { menuPage = 'levels'; }, true);
-  button(VW / 2 - 90, portrait ? 285 : 168, 180, 30, '居庸关 · 无限跑酷', startEndless, false);
-  button(VW / 2 - 90, portrait ? 340 : 240, 180, 24, '教学播报：' + (hintsOn ? '开' : '关'), toggleHints, false);
+  ctx.fillText('一场说走就走的出走 · 八幕完整篇章', VW / 2, portrait ? 184 : 88);
+  button(VW / 2 - 90, portrait ? 224 : 108, 180, 30, '出关记 · 八幕选关', function () { menuPage = 'levels'; }, true);
+  button(VW / 2 - 90, portrait ? 262 : 146, 180, 30, '居庸关 · 无限跑酷', startEndless, false);
+  /* v1.4.0 功名簿：成就展示页入口 */
+  button(VW / 2 - 90, portrait ? 300 : 184, 180, 24, '功名簿 · 成就', function () { menuPage = 'ach'; }, false);
+  button(VW / 2 - 90, portrait ? 334 : 216, 180, 22, '教学播报：' + (hintsOn ? '开' : '关'), toggleHints, false);
   ctx.fillStyle = '#8a86a0';
   ctx.font = '9px sans-serif';
-  ctx.fillText('史料：《明史 · 张钦传》《明史 · 武宗本纪》《明武宗实录》', VW / 2, portrait ? 400 : 216);
+  ctx.fillText('史料：《明史 · 张钦传》《明史 · 武宗本纪》《明武宗实录》', VW / 2, portrait ? 384 : 252);
   ctx.fillStyle = '#6a6680';
-  ctx.fillText('点按或空格跳跃 · 拾取大将军印可变身朱寿', VW / 2, portrait ? 420 : 230);
+  ctx.fillText('点按或空格跳跃 · 拾取大将军印可变身朱寿', VW / 2, portrait ? 404 : 264);
 }
 
 /* v1.0.0 选关页：通关一幕解锁下一幕（unlockedActs 持久化于 localStorage） */
@@ -2282,6 +2455,47 @@ function drawLevelSelect() {
   button(VW / 2 - 70, portrait ? VH - 92 : VH - 58, 140, 28, '◀ 返回', function () { menuPage = 'main'; }, false);
 }
 
+/* v1.4.0 功名簿 · 成就展示页：解锁项金框金字，未解锁灰态（描述仍然可见——给玩家目标感）。
+   清档（容器清缓存）后成就重新可达，不做任何依赖存档的一次性内容 */
+function drawAchPage() {
+  drawBackground(MENU_BG);
+  ctx.fillStyle = 'rgba(8,10,18,0.55)';
+  ctx.fillRect(0, 0, VW, VH);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffd76a';
+  ctx.font = 'bold 15px sans-serif';
+  ctx.fillText('功名簿 · 成就', VW / 2, portrait ? 66 : 40);
+  const ids = Object.keys(ACH);
+  let done = 0;
+  for (let i = 0; i < ids.length; i++) if (achUnlocked[ids[i]]) done++;
+  ctx.fillStyle = '#8a86a0';
+  ctx.font = '9px sans-serif';
+  ctx.fillText('已解锁 ' + done + ' / ' + ids.length, VW / 2, portrait ? 84 : 56);
+  const rowH = portrait ? 94 : 54;
+  const y0 = portrait ? 104 : 70;
+  for (let i = 0; i < ids.length; i++) {
+    const a = ACH[ids[i]];
+    const got = !!achUnlocked[ids[i]];
+    const y = y0 + i * rowH;
+    const ph = rowH - 12;
+    ctx.fillStyle = got ? 'rgba(60,46,10,0.55)' : 'rgba(20,24,34,0.7)';
+    ctx.fillRect(24, y, VW - 48, ph);
+    ctx.strokeStyle = got ? '#d4a017' : '#4a4658';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(24.5, y + 0.5, VW - 49, ph - 1);
+    ctx.fillStyle = got ? '#ffd76a' : '#8a86a0';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillText((got ? '◆ ' : '◇ ') + a.name, VW / 2, y + 18);
+    ctx.fillStyle = got ? '#e8e4d8' : '#6a6680';
+    ctx.font = '9px sans-serif';
+    wrapText(a.desc, VW / 2, y + 34, VW - 64, 13);
+    ctx.fillStyle = got ? '#9fe8b8' : '#55516a';
+    ctx.font = 'bold 9px sans-serif';
+    ctx.fillText(got ? '已解锁' : '未解锁', VW / 2, y + ph - 8);
+  }
+  button(VW / 2 - 70, portrait ? VH - 92 : VH - 58, 140, 28, '◀ 返回', function () { menuPage = 'main'; }, false);
+}
+
 /* ---------- 总渲染 ---------- */
 function render() {
   uiButtons.length = 0;
@@ -2289,6 +2503,7 @@ function render() {
   ctx.imageSmoothingEnabled = false;
   if (state === 'menu') {
     if (menuPage === 'levels') drawLevelSelect();
+    else if (menuPage === 'ach') drawAchPage();
     else drawMenu();
     return;
   }
@@ -2301,6 +2516,8 @@ function render() {
   } else {
     drawGate();
     drawPlatforms();
+    /* v1.4.0 杨廷和：讲席人物画在障碍层之下（背景人物，玩家从其身前跑过） */
+    if (yang) drawYang(Math.floor(yang.x), G, yang.t, yang.st);
     drawObstacles();
     drawQjWarn();
     drawItems();
@@ -2415,6 +2632,27 @@ function render() {
   }
   ctx.restore();
   drawHUD();
+  /* v1.4.0 成就解锁横幅：全局可见（含终章演出中解锁的威武大将军） */
+  if (achToast) {
+    const ta = achToast;
+    const alpha = ta.t > 2.7 ? (3.2 - ta.t) / 0.5 : (ta.t < 0.5 ? ta.t / 0.5 : 1);
+    const bw = 216, bh = 34;
+    const bx = (VW - bw) / 2, by = portrait ? 148 : 118;
+    ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+    ctx.fillStyle = 'rgba(40,30,6,0.92)';
+    ctx.fillRect(bx, by, bw, bh);
+    ctx.strokeStyle = '#d4a017';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffd76a';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.fillText('成就解锁 · ' + ACH[ta.id].name, VW / 2, by + 14);
+    ctx.fillStyle = '#e8e4d8';
+    ctx.font = '9px sans-serif';
+    ctx.fillText(ACH[ta.id].short, VW / 2, by + 27);
+    ctx.globalAlpha = 1;
+  }
   /* v1.0.0 出关演出横幅：幕8「出关」金字；其余幕「第X幕 · 完」+ 本幕标题（v1.0.3） */
   if (outro) {
     const a = outroT < 0.4 ? outroT / 0.4 : (outroT > 2.2 ? Math.max(0, 1 - (outroT - 2.2) / 0.6) : 1);
@@ -2463,6 +2701,7 @@ function frame(now) {
     if (!finaleCry && finaleT > 1.0) { finaleCry = true; AudioSys.cry(); }
   }
   updateParticles(dt);
+  if (achToast) { achToast.t -= dt; if (achToast.t <= 0) achToast = null; }   // v1.4.0 成就横幅计时
   if (shakeT > 0) shakeT -= dt;
   render();
   requestAnimationFrame(frame);
