@@ -1,6 +1,6 @@
 'use strict';
 /* ============================================================
- * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.0-wip2.2）
+ * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.0-wip2.3）
  * ------------------------------------------------------------
  * v1.4.0-wip2：杨廷和弹幕实装（师生互动）——projectiles 弹幕底座（弹种注册表，
  *     moshu 预留 v1.5.0 梁储）+ 四态时间驱动状态机（入画→开讲→移疾→退场）+
@@ -1330,12 +1330,14 @@ function updatePlay(dt) {
       continue;
     }
     if (companion && companion.following) {
-      /* 谷大用护驾：替陛下挡 1 次批注，讲席缩短 3s（「被搅了局」） */
+      /* 谷大用护驾：替陛下挡 1 次批注，讲席缩短 3s（「被搅了局」）
+         v1.4.0-wip2.3 修复：先粒子后置空——原顺序 companion=null 后再读 companion.x，
+         空指针异常每帧炸掉主循环（表现为游戏「假暂停」卡死） */
       projectiles.splice(pi3, 1);
-      companion = null;
-      if (yang && yang.state === 'lecture') yang.lectureT += 3;
       burst(pj.x + pj.w / 2, pj.y + pj.h / 2, 14, '#e05a4a');
       burst(companion.x + COMP_W / 2, companion.y + COMP_H / 2, 10, '#d8d0e8');
+      companion = null;
+      if (yang && yang.state === 'lecture') yang.lectureT += 3;
       AudioSys.smash();
       AudioSys.hit();
       shakeT = 0.2;
@@ -1432,6 +1434,10 @@ function updatePlay(dt) {
     }
     obstacles = [];
     items = [];
+    /* v1.4.0-wip2.3 修复：幕终杨廷和与批注弹幕同步退场——原先讲席状态机独立于 outro，
+       关卡结束画面上他仍站在原地、朱批悬在半空 */
+    yang = null;
+    projectiles = [];
     outro = true;
     outroT = 0;
     outroNext = 'finale';
@@ -1481,6 +1487,8 @@ function updatePlay(dt) {
     }
     obstacles = [];
     items = [];
+    yang = null;                       // v1.4.0-wip2.3：幕终同步退场（同 gate 路径）
+    projectiles = [];
     outro = true;
     outroT = 0;
     outroNext = 'clear';
