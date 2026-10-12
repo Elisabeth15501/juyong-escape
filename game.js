@@ -1,6 +1,6 @@
 'use strict';
 /* ============================================================
- * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.0-wip2.1）
+ * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.0-wip2.2）
  * ------------------------------------------------------------
  * v1.4.0-wip2：杨廷和弹幕实装（师生互动）——projectiles 弹幕底座（弹种注册表，
  *     moshu 预留 v1.5.0 梁储）+ 四态时间驱动状态机（入画→开讲→移疾→退场）+
@@ -464,7 +464,7 @@ try { achUnlocked = JSON.parse(store.get(ACH_KEY) || '{}') || {}; } catch (e) { 
 let achToast = null;              // 当前展示的解锁横幅 { id, t }（t 剩余秒数）
 let achScroll = 0;                // v1.4.0-wip1.3 功名簿纵向滚动偏移（游戏坐标 px）
 let achScrollMax = 0;             // 本帧绘制的最大可滚动量（内容超出视口时 > 0）
-let achDragY = null;              // 功名簿拖拽滚动：指针上一帧 Y（屏幕坐标），null = 未在拖拽
+let achDragPt = null;             // 功名簿拖拽滚动：指针上一帧屏幕坐标 {x,y}，null = 未在拖拽（wip2.2 主轴随朝向）
 function achSave() { store.set(ACH_KEY, JSON.stringify(achUnlocked)); }
 function unlockAch(id) {
   if (!ACH[id] || achUnlocked[id]) return false;
@@ -742,25 +742,28 @@ canvas.addEventListener('pointerdown', function (e) {
   const r = canvas.getBoundingClientRect();
   const lx = (e.clientX - r.left) / r.width * VW;
   const ly = (e.clientY - r.top) / r.height * VH;
-  if (state === 'menu' && menuPage === 'ach') achDragY = e.clientY;   // 功名簿：记录拖拽起点（松手清除）
+  if (state === 'menu' && menuPage === 'ach') achDragPt = { x: e.clientX, y: e.clientY };   // 功名簿：记录拖拽起点（松手清除）
   handleTap(lx, ly);
 });
 canvas.addEventListener('pointerup', function (e) {
   e.preventDefault();
-  achDragY = null;
+  achDragPt = null;
   releaseJump();
 });
-/* v1.4.0-wip1.3 功名簿滚动三通道：滚轮（桌面）/ 指针拖拽（触屏+鼠标共用）/ 方向键 */
+/* v1.4.0-wip2.2 功名簿滚动三通道：滚轮（桌面）/ 指针拖拽（触屏+鼠标共用）/ 方向键
+   主轴随朝向：竖屏上下滚、横屏左右滚（滚轮 deltaX 优先——Shift+滚轮/触控板横扫） */
 canvas.addEventListener('wheel', function (e) {
   if (state !== 'menu' || menuPage !== 'ach') return;
   e.preventDefault();
-  achScroll += e.deltaY > 0 ? 40 : -40;
+  const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+  achScroll += d > 0 ? 40 : -40;
 }, { passive: false });
 canvas.addEventListener('pointermove', function (e) {
-  if (achDragY === null) return;
+  if (!achDragPt) return;
   const r = canvas.getBoundingClientRect();
-  achScroll += (achDragY - e.clientY) * (VH / r.height);   // 屏幕像素差换算到游戏坐标
-  achDragY = e.clientY;
+  if (portrait) achScroll += (achDragPt.y - e.clientY) * (VH / r.height);   // 屏幕像素差换算到游戏坐标
+  else achScroll += (e.clientX - achDragPt.x) * (VW / r.width);             // 横屏：往左拖 = 往右滚
+  achDragPt = { x: e.clientX, y: e.clientY };
 });
 
 window.addEventListener('keydown', function (e) {
@@ -769,10 +772,12 @@ window.addEventListener('keydown', function (e) {
     togglePause();
     return;
   }
-  /* 功名簿页：方向键 / PgUp·PgDn 滚动（v1.4.0-wip1.3） */
+  /* 功名簿页：方向键 / PgUp·PgDn 滚动（v1.4.0-wip2.2 横屏补左右键） */
   if (state === 'menu' && menuPage === 'ach') {
     if (e.code === 'ArrowDown' || e.code === 'PageDown') { e.preventDefault(); achScroll += e.code === 'PageDown' ? 120 : 36; return; }
     if (e.code === 'ArrowUp' || e.code === 'PageUp') { e.preventDefault(); achScroll -= e.code === 'PageUp' ? 120 : 36; return; }
+    if (e.code === 'ArrowRight') { e.preventDefault(); achScroll += 36; return; }
+    if (e.code === 'ArrowLeft') { e.preventDefault(); achScroll -= 36; return; }
   }
   if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
     e.preventDefault();
@@ -2666,33 +2671,35 @@ function drawAchPage() {
   ctx.fillStyle = '#8a86a0';
   ctx.font = '9px sans-serif';
   ctx.fillText('已解锁 ' + done + ' / ' + ids.length, VW / 2, portrait ? 84 : 50);
-  const cols = portrait ? 1 : 3;
-  const gap = portrait ? 0 : 16;
-  const cardW = portrait ? VW - 48 : Math.floor((VW - 48 - gap * (cols - 1)) / cols);
-  const cardH = portrait ? 84 : 158;
-  const y0 = portrait ? 104 : 66;
-  const gx0 = (VW - (cardW * cols + gap * (cols - 1))) / 2;
-  const rowH = cardH + (portrait ? 12 : 0);
-  const rows = Math.ceil(ids.length / cols);
+  /* v1.4.0-wip2.2 双朝向布局：竖屏单列纵滚（拇指上下）；横屏单行横滚——
+     宽屏横向空间天然富余，卡片排成一行从右往左滚，第二行不再被返回键截断 */
+  const n = ids.length;
   const btnY = portrait ? VH - 92 : VH - 32;
+  const y0 = portrait ? 104 : 66;
   const viewH = btnY - 10 - y0;
-  /* v1.4.0-wip1.3 滚动量收敛：每帧按实际内容高度夹取，滚轮/拖拽/按键随便改，画出来永远合法 */
-  achScrollMax = Math.max(0, rows * rowH - viewH);
+  let cardW, cardH, gapX, gapY, contentLen;
+  if (portrait) {
+    cardW = VW - 48; cardH = 84; gapX = 0; gapY = 12;
+    contentLen = n * (cardH + gapY);                        // 纵向内容长
+  } else {
+    cardW = 176; cardH = viewH - 4; gapX = 14; gapY = 0;    // 横向：卡高吃满视口
+    contentLen = n * cardW + (n - 1) * gapX;                // 横向内容长
+  }
+  /* 滚动量收敛：每帧按实际内容长度夹取（竖屏按高度、横屏按宽度），输入侧随便改 */
+  achScrollMax = portrait ? Math.max(0, contentLen - viewH) : Math.max(0, contentLen - (VW - 48));
   if (achScroll > achScrollMax) achScroll = achScrollMax;
   if (achScroll < 0) achScroll = 0;
-  /* 卡片区裁剪 + 纵向平移：卡片滚出视口的部分不压表头、不压返回键 */
+  /* 卡片区裁剪 + 主轴平移：卡片滚出视口的部分不压表头、不压返回键 */
   ctx.save();
   ctx.beginPath();
   ctx.rect(0, y0 - 4, VW, viewH + 8);
   ctx.clip();
-  ctx.translate(0, -achScroll);
+  if (portrait) ctx.translate(0, -achScroll); else ctx.translate(-achScroll, 0);
   for (let i = 0; i < ids.length; i++) {
     const a = ACH[ids[i]];
     const got = !!achUnlocked[ids[i]];
-    const col = portrait ? 0 : i % cols;
-    const row = portrait ? i : Math.floor(i / cols);
-    const x = gx0 + col * (cardW + gap);
-    const y = y0 + row * rowH;
+    const x = portrait ? 24 : 24 + i * (cardW + gapX);
+    const y = portrait ? y0 + i * (cardH + gapY) : y0;
     const cx = x + cardW / 2;
     ctx.fillStyle = got ? 'rgba(60,46,10,0.55)' : 'rgba(20,24,34,0.7)';
     ctx.fillRect(x, y, cardW, cardH);
@@ -2713,14 +2720,23 @@ function drawAchPage() {
     ctx.fillText(got ? '已解锁' : '未解锁', cx, y + cardH - 8);
   }
   ctx.restore();
-  /* 滚动条指示（内容未超出视口时不画） */
+  /* 滚动条指示（内容未超出视口时不画）：竖屏右缘纵条 / 横屏底部横条 */
   if (achScrollMax > 0) {
-    const th = Math.max(18, Math.floor(viewH * viewH / (rows * rowH)));
-    const ty = y0 + Math.floor((viewH - th) * (achScroll / achScrollMax));
     ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.fillRect(VW - 7, y0, 4, viewH);
-    ctx.fillStyle = '#8a8fa0';
-    ctx.fillRect(VW - 7, ty, 4, th);
+    if (portrait) {
+      const th = Math.max(18, Math.floor(viewH * viewH / contentLen));
+      const ty = y0 + Math.floor((viewH - th) * (achScroll / achScrollMax));
+      ctx.fillRect(VW - 7, y0, 4, viewH);
+      ctx.fillStyle = '#8a8fa0';
+      ctx.fillRect(VW - 7, ty, 4, th);
+    } else {
+      const trackW = VW - 48;
+      const tw = Math.max(24, Math.floor(trackW * trackW / contentLen));
+      const tx = 24 + Math.floor((trackW - tw) * (achScroll / achScrollMax));
+      ctx.fillRect(24, y0 + viewH + 3, trackW, 4);
+      ctx.fillStyle = '#8a8fa0';
+      ctx.fillRect(tx, y0 + viewH + 3, tw, 4);
+    }
   }
   button(VW / 2 - 70, btnY, 140, 28, '◀ 返回', function () { menuPage = 'main'; }, false);
 }
