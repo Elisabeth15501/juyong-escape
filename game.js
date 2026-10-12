@@ -1,6 +1,6 @@
 'use strict';
 /* ============================================================
- * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.0-wip2.3）
+ * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.0-wip2.4）
  * ------------------------------------------------------------
  * v1.4.0-wip2：杨廷和弹幕实装（师生互动）——projectiles 弹幕底座（弹种注册表，
  *     moshu 预留 v1.5.0 梁储）+ 四态时间驱动状态机（入画→开讲→移疾→退场）+
@@ -543,7 +543,8 @@ function projBand(kind) {
   const d = PROJ_DEF.zhubi;
   return kind === 'high' ? { y: G - d.highOff, h: d.highH } : { y: G - d.lowOff, h: d.lowH };
 }
-/* 掷批注：从杨廷和身前掷出，随世界左移；半空批注先显影朱渍影（落点读位）再判死 */
+/* 掷批注：批注先「握在手中」显影朱渍影（前摇即节拍器，不判定），显影结束脱手随世界左移飞向玩家；
+   半空批注落点地面投影闪烁读位 */
 function yangThrow(kind) {
   const band = projBand(kind);
   projectiles.push({
@@ -1240,12 +1241,21 @@ function updatePlay(dt) {
   for (let pi = 0; pi < platforms.length; pi++) platforms[pi].x -= mv;
   /* v1.4.0-wip2 杨廷和四态推进：时间驱动状态机（入画→开讲减速+掷批注→移疾退场） */
   yangAdvance(mv, dt);
-  /* v1.4.0-wip2 批注弹幕推进：随世界左移；warn 期为朱渍影显影（不判定） */
+  /* v1.4.0-wip2 批注弹幕推进：随世界左移；warn 期为朱渍影显影（不判定）。
+     v1.4.0-wip2.4 修复：显影期批注「握在手中」不随世界左移（钉在杨廷和手前，前摇即节拍器）——
+     原实现显影期即随世界移动，而幕5 减速后批注从生成点飞到玩家仅约 0.8s，
+     短于朱渍影时长（1.2s/0.72s），批注以无敌幽灵态穿过玩家：
+     表现为「卷轴出现在玩家后面 / 还没扔出来就被玩家跑过」。
+     改后显影结束才脱手，脱手 → 玩家全程 lethal 飞行约 0.8s ≥ 0.6s 反应窗军规 */
   for (let pi2 = projectiles.length - 1; pi2 >= 0; pi2--) {
     const pj = projectiles[pi2];
     pj.t += dt;
-    if (pj.warn > 0) pj.warn -= dt;
-    pj.x -= mv;
+    if (pj.warn > 0) {
+      pj.warn -= dt;
+      if (yang) pj.x = yang.x - 24;                     // 仍在手中：跟随杨廷和（含退场拖手边缘情况）
+    } else {
+      pj.x -= mv;
+    }
     if (pj.x < -40) projectiles.splice(pi2, 1);
   }
   obstacles = obstacles.filter(function (o) { return o.x > -60; });
@@ -1919,7 +1929,7 @@ function drawPlatforms() {
   }
 }
 
-/* v1.4.0-wip2 批注弹幕绘制：warn 期 = 朱渍影落点显影（半空批注地面投影闪烁）；
+/* v1.4.0-wip2 批注弹幕绘制：warn 期 = 朱渍影显影（批注握在杨廷和手中不移动，地面投影闪烁读位，wip2.4）；
    生效期 = 朱红批注小卷（三色弹种系统：批注朱红 / 奏折米白 / 墨弹墨黑预留） */
 function drawProjectiles() {
   for (let i = 0; i < projectiles.length; i++) {
