@@ -1,6 +1,6 @@
 'use strict';
 /* ============================================================
- * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.0-wip2.4）
+ * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.0-wip2.5）
  * ------------------------------------------------------------
  * v1.4.0-wip2：杨廷和弹幕实装（师生互动）——projectiles 弹幕底座（弹种注册表，
  *     moshu 预留 v1.5.0 梁储）+ 四态时间驱动状态机（入画→开讲→移疾→退场）+
@@ -1929,15 +1929,33 @@ function drawPlatforms() {
   }
 }
 
-/* v1.4.0-wip2 批注弹幕绘制：warn 期 = 朱渍影显影（批注握在杨廷和手中不移动，地面投影闪烁读位，wip2.4）；
-   生效期 = 朱红批注小卷（三色弹种系统：批注朱红 / 奏折米白 / 墨弹墨黑预留） */
+/* v1.4.0-wip2 批注弹幕绘制。
+   v1.4.0-wip2.5 落点显影修正：朱渍影画在「命中点=玩家车道」而非卷轴当前位置——
+   卷轴命中点永远是玩家所在车道，影子却画在杨廷和手边（屏幕右侧远处），
+   预警从未在玩家身上显现，玩家「未显现前就已走过」命中时刻。
+   现在：贴地批注 = 玩家脚下地面闪红条（跳）；半空批注 = 玩家头顶弹带高度闪红条（别跳）；
+   握在手中阶段卷轴本体半透明画出（蓄力可读）；脱手后影子持续闪烁直至卷轴飞到/越过 */
 function drawProjectiles() {
   for (let i = 0; i < projectiles.length; i++) {
     const p = projectiles[i];
-    if (p.warn > 0) {
-      const a = 0.22 + 0.16 * Math.sin(p.t * 10);
+    /* 朱渍影：画在玩家车道（弹带高度随弹种），卷轴未越过玩家期间全程可见 */
+    if (p.x + p.w > PLAYER_X + 2) {
+      const pulse = p.warn > 0 ? 8 : 16;                   // 脱手后脉冲加快（「就现在」）
+      const a = (p.warn > 0 ? 0.2 : 0.3) + 0.16 * Math.sin(p.t * pulse);
       ctx.fillStyle = 'rgba(224,90,74,' + a.toFixed(2) + ')';
-      ctx.fillRect(p.x - 6, G - 4, p.w + 12, 4);
+      if (p.kind === 'high') {
+        const hb = projBand('high');
+        ctx.fillRect(PLAYER_X - 8, hb.y, PROJ_DEF.zhubi.w + 16, hb.h);
+      } else {
+        ctx.fillRect(PLAYER_X - 8, G - 4, PROJ_DEF.zhubi.w + 16, 4);
+      }
+    }
+    if (p.warn > 0) {
+      /* 握在手中：卷轴本体半透明（蓄力中，尚未脱手） */
+      ctx.globalAlpha = 0.55;
+      ctx.fillStyle = '#e05a4a';
+      ctx.fillRect(p.x, p.y, p.w, p.h);
+      ctx.globalAlpha = 1;
       continue;
     }
     ctx.fillStyle = '#e05a4a';
