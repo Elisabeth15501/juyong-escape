@@ -1,7 +1,11 @@
 'use strict';
 /* ============================================================
- * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.0-wip2.5）
+ * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.0-wip2.7）
  * ------------------------------------------------------------
+ * v1.4.0-wip2.7：预警距离扩展——生成点外推 VW+50→VW+150（SPAWN_OFF）+ 通用屏缘
+ *     预警灯（琥珀感叹号，千斤闸红色体系推广到全障碍，位置随弹带携带跳/别跳语义）；
+ *     总反应窗 0.95s→约1.3s（顶速）。与 wip2.6 手感三件套（跳跃缓冲/土狼时间/碰撞
+ *     盒宽容）共同治「起跳太迟/太早」
  * v1.4.0-wip2：杨廷和弹幕实装（师生互动）——projectiles 弹幕底座（弹种注册表，
  *     moshu 预留 v1.5.0 梁储）+ 四态时间驱动状态机（入画→开讲→移疾→退场）+
  *     三问固定循环批注（贴地=跳/半空=别跳，朱渍影落点读位，掷笔双音）+
@@ -84,6 +88,11 @@ const TRANSFORM_TIME = 6;      // 变身朱寿持续秒数
 const PX_PER_LI = 150;         // 像素 → 里（显示用）
 const FLY_OBST_OFFSET = 100;   // 飞行障碍物(奏折)离地高度偏移：越大越高（原 74）
 const PORTRAIT_SPEED = 0.8;    // 竖屏速度补偿（横向视野短 → 放慢）
+/* v1.4.0-wip2.7 预警距离：障碍生成点外推量（旧 VW+50 的屏外预警窗仅 0.12-0.2s≈无效，
+   用户实测「看到障碍时已经太迟起跳」）。生成点=VW+SPAWN_OFF 后配合屏缘预警灯，
+   总反应窗 = 屏外预警(SPAWN_OFF/speed) + 屏内可视((VW-PLAYER_X-PLAYER_W)/speed)，
+   幕7 顶速 410px/s：0.37s + 0.95s ≈ 1.3s（旧版仅 0.95s）。生成节奏不变、密度不变 */
+const SPAWN_OFF = 150;
 const COMP_W = 30;             // 谷大用（同伴）碰撞/绘制宽
 const COMP_H = 52;             // 谷大用比玩家（57）略矮：年长微驼的老太监
 const COMP_FOLLOW_DX = 36;     // 跟随时与玩家的水平间距
@@ -941,7 +950,7 @@ function spawnObstacle() {
     const drop = Math.round(PLAT.dropAir * speed + PLAT.dropPad);   // v1.3.3 带宽随速度伸缩（满跳离台落点线性外移）
     types = types.filter(function (t) { return t !== 'qianjin' && t !== 'zouzhe'; });
     if (types.length === 0) return;                       // 纯奏折/闸池（如幕5）安全放弃，不崩溃
-    if (VW + 50 > edgeR && VW + 50 < edgeR + drop) return;
+    if (VW + SPAWN_OFF > edgeR && VW + SPAWN_OFF < edgeR + drop) return;
   }
   const type = types[Math.floor(Math.random() * types.length)];
   /* v1.0.0 幕 3 教学点：本幕第一个障碍必为「锁」（hint 里教的正是它）
@@ -970,7 +979,7 @@ function spawnObstacle() {
   /* v1.0.0 幕 5 彩蛋：奏折随机挂谏言文案 */
   const memo = (firstType === 'zouzhe' && mode === 'level' && levelIndex === 4)
     ? ZOUZHE_MEMOS[Math.floor(Math.random() * ZOUZHE_MEMOS.length)] : null;
-  const ob = { type: firstType, x: VW + 50, t: 0, dead: false, chasing: false, chaseT: 0, cool: 0, memo: memo, tutor: isTutorZq };
+  const ob = { type: firstType, x: VW + SPAWN_OFF, t: 0, dead: false, chasing: false, chaseT: 0, cool: 0, memo: memo, tutor: isTutorZq };
   /* v1.2.0-wip5 防重叠：新障碍与在场千斤闸的最小水平间距。闸叶全高 240px（不能跳），
      跳其他障碍的满跳水平位移 ≈204px——间距不足时跳跃弧线会扫进闸叶，或闸后贴脸出障碍形成必死局。
      所有障碍同速左移、相对间距恒定，spawn 时查一次即可；冲突则本次放弃生成（不置 tutorUsed/hint 等副作用），等下一轮 */
@@ -1890,6 +1899,35 @@ function drawQjWarn() {
     ctx.fillRect(x, by, 6, 18); ctx.fillRect(x, by + 22, 6, 6);
   }
   ctx.globalAlpha = 1;
+}
+
+/* v1.4.0-wip2.7 通用屏缘预警：普通障碍尚在屏右外侧逼近时，右缘亮琥珀色感叹号。
+   千斤闸已验证的可读性手段（天天酷跑同款）推广到全障碍——用户实测「看到障碍时已经
+   太迟起跳」：旧生成点 VW+50 的屏外预警窗仅 0.12-0.2s，等于入屏才看见。
+   现在 SPAWN_OFF=150 外推 + 屏缘灯，屏外可读窗拉到 0.37-0.6s（随速度反比）。
+   千斤闸走自己的红色双感叹号体系（红=别跳语义），此处排除避免双标；
+   挂教学标的障碍不亮灯（「预备…/跳！」提示已接管同一视觉通道） */
+function obstWarnVisible(o) {
+  return o.type !== 'qianjin' && !o.dead && !o.shaken && !o.tutor &&
+         o.x > VW + 8 && o.x - VW <= SPAWN_OFF;
+}
+function drawObstWarn() {
+  for (let i = 0; i < obstacles.length; i++) {
+    const o = obstacles[i];
+    if (!obstWarnVisible(o)) continue;
+    const d = OBST_DEF[o.type];
+    /* 标记高度随弹带：地面障碍贴地亮（=准备跳）、飞行奏折在飞行带亮（=别跳预备）——
+       位置本身携带语义，不误导跳/别跳判断 */
+    const by = d.fly ? G - FLY_OBST_OFFSET - 48 : G - 66;
+    const a = qjWarnAlpha(gt);
+    ctx.globalAlpha = a;
+    ctx.fillStyle = '#503c13';
+    ctx.fillRect(VW - 20, by + 1, 7, 15); ctx.fillRect(VW - 20, by + 20, 7, 6);
+    ctx.fillStyle = '#E2A94B';
+    ctx.fillRect(VW - 21, by, 7, 15); ctx.fillRect(VW - 21, by + 19, 7, 6);
+    ctx.globalAlpha = 1;
+    break;   // 屏外障碍可能同时不止一个，右缘只亮一处（可读性优先，先到者先亮）
+  }
 }
 
 function drawQianjin(o) {
@@ -2823,6 +2861,7 @@ function render() {
     drawObstacles();
     drawProjectiles();
     drawQjWarn();
+    drawObstWarn();
     drawItems();
     if (companion) drawGudayong(Math.floor(companion.x), Math.floor(companion.y), companion.animT, companion);
     drawPlayer();
