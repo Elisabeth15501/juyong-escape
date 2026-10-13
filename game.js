@@ -72,6 +72,11 @@ let PIXEL_SCALE = 3;           // 逻辑坐标 → 物理像素比例（layout()
 const GRAVITY = 2400;
 const JUMP_V = -820;
 const JUMP_CUT = -300;         // 提前松手截断跳跃
+/* v1.4.0-wip2.6 手感三件套：跳跃缓冲 + 土狼时间（不改变物理与关卡，只放宽输入/判定） */
+const FEEL = {
+  buffer: 0.12,                // 跳跃缓冲：空中提前点按 ≤120ms，落地瞬间自动起跳（治「起跳太迟」）
+  coyote: 0.09                 // 土狼时间：走出台缘后仍有 90ms 可起跳（治高台边缘误跌）
+};
 const PLAYER_X = 72;
 const PLAYER_W = 28;
 const PLAYER_H = 57;   // 比侍卫障碍物(44)高，玩家更醒目（约原生13×27的2.1×）
@@ -651,7 +656,7 @@ function wrapText(text, x, y, maxW, lh) {
 function currentLevel() { return mode === 'level' ? LEVELS[levelIndex] : null; }
 
 function resetRun() {
-  player = { y: G - PLAYER_H, vy: 0, onGround: true, support: null, form: 'zhuhouzhao', animT: 0, landT: 0 };
+  player = { y: G - PLAYER_H, vy: 0, onGround: true, support: null, form: 'zhuhouzhao', animT: 0, landT: 0, coyote: 0, jumpBuf: 0 };
   obstacles = [];
   items = [];
   platforms = [];                       // v1.3.0 高台
@@ -720,15 +725,20 @@ function nextLevel() {
 
 /* ---------- 输入 ---------- */
 function jump() {
-  if (state !== 'play' || paused) return;
-  if (player.onGround) {
+  if (state !== 'play' || paused || outro) return;
+  if (player.onGround || player.coyote > 0) {
     player.onGround = false;
     player.support = null;           // v1.3.0 离开支撑面（地面或台面）
+    player.coyote = 0;               // wip2.6 起跳即耗尽土狼窗口（防连跳二段跳）
+    player.jumpBuf = 0;
     player.vy = JUMP_V;
     player.takeoffT = 0.07;          // wip16 起跳蹬伸窗口（约4帧，快速衰减，只此一段形变）
     player.cut = false;
     AudioSys.jump();
     dust(PLAYER_X + PLAYER_W / 2, G, 4);
+  } else {
+    /* wip2.6 跳跃缓冲：空中点按不再丢弃——存 120ms，落地瞬间自动起跳（治「起跳太迟」） */
+    player.jumpBuf = FEEL.buffer;
   }
 }
 function releaseJump() {
@@ -1087,6 +1097,14 @@ function updatePlay(dt) {
   } else if (Math.random() < dt * 6) {
     dust(PLAYER_X + 4, G, 1);
   }
+  /* wip2.6 手感三件套计时器：着地持续刷新土狼窗口；空中衰减缓冲；
+     落地时若缓冲仍在（≤120ms 前点按过）立即自动起跳 */
+  if (player.onGround) player.coyote = FEEL.coyote;
+  else if (player.coyote > 0) player.coyote -= dt;
+  if (player.jumpBuf > 0) {
+    player.jumpBuf -= dt;
+    if (player.onGround && player.jumpBuf > 0) jump();
+  }
 
   if (transformT > 0) {
     transformT -= dt;
@@ -1158,8 +1176,9 @@ function updatePlay(dt) {
   }
 
   const mv = speed * dt;
-  /* 玩家碰撞盒：道具拾取 / 障碍碰撞共用 */
-  const pr = { x: PLAYER_X + 3, y: player.y + 3, w: PLAYER_W - 6, h: PLAYER_H - 5 };
+  /* 玩家碰撞盒：道具拾取 / 障碍碰撞共用
+     wip2.6 脚底宽容 2→5px：跳跃下落缘擦过障碍顶不再判死（治「起跳太早」最挫败的死法） */
+  const pr = { x: PLAYER_X + 3, y: player.y + 3, w: PLAYER_W - 6, h: PLAYER_H - 8 };
   for (let i = 0; i < obstacles.length; i++) {
     const o = obstacles[i];
     o.x -= mv; o.t += dt;
@@ -1279,10 +1298,11 @@ function updatePlay(dt) {
     const o = obstacles[i];
     const d = OBST_DEF[o.type];
     const oy = obstY(o);
-    /* 千斤闸特例：碰撞盒 = 当前闸体（升起时闸底悬空，跳进闸洞同样撞闸体——物理一致） */
+    /* 千斤闸特例：碰撞盒 = 当前闸体（升起时闸底悬空，跳进闸洞同样撞闸体——物理一致）；
+       其余障碍 wip2.6 内缩 2→3px（每侧多 1px 宽容，早跳/迟跳都不再边缘擦死） */
     const obox = (o.type === 'qianjin')
       ? { x: o.x + 2, y: G - qjOpening(o) - QJ.leaf + 2, w: QJ.w - 4, h: QJ.leaf - 4 }
-      : { x: o.x + 2, y: oy + 2, w: d.w - 4, h: d.h - 4 };
+      : { x: o.x + 3, y: oy + 3, w: d.w - 6, h: d.h - 6 };
     if (rectsOverlap(pr, obox)) {
       if (o.type === 'zhangqin' && o.shaken) {
         /* 被甩的张钦：漂离途中不再参与任何碰撞（玩家从他身边跑过） */
@@ -1331,7 +1351,8 @@ function updatePlay(dt) {
   for (let pi3 = projectiles.length - 1; pi3 >= 0; pi3--) {
     const pj = projectiles[pi3];
     if (pj.warn > 0) continue;                          // 朱渍影显影期不判定（读位时间）
-    if (!rectsOverlap(pr, pj)) continue;
+    /* wip2.6 批注碰撞盒四边内缩 2px（卷轴仅 20px 宽，1px 视觉重叠不判死） */
+    if (!rectsOverlap(pr, { x: pj.x + 2, y: pj.y + 2, w: pj.w - 4, h: pj.h - 4 })) continue;
     if (transformT > 0) {
       /* 变身朱寿：批注被撞散，但讲席照常——以臣名君，变身只免这一下、结束不了这堂课 */
       projectiles.splice(pi3, 1);
