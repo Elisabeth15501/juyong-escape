@@ -1,7 +1,12 @@
 'use strict';
 /* ============================================================
- * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.0-wip3.0）
+ * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.0-wip3.1）
  * ------------------------------------------------------------
+ * v1.4.0-wip3.1：移动端性能补丁（手机幕5大跳越奏折顿帧）——①DPR上限 3→2
+ *     （3x 手机渲染面积 9x→4x，文本光栅成本约降55%）②幕5谏言 memo 宽度惰性缓存
+ *     （原每帧每奏折 font切换+measureText）③成就落盘 localStorage 同步写挪出关键帧
+ *     （首次解锁「中国人能飞」恰在大跳瞬间，同步I/O+四振荡器音效同帧叠加）
+ *     排查结论：与 wip3.0 关卡延长无关（每帧负载与 length 无关）
  * v1.4.0-wip3.0：幕5 整关延长——length 5000→6500（+30%，用户要求）；讲席/三问/生成节奏不动
  * v1.4.0-wip2.9：脱手飞行 0.85→0.90×世界速（用户实测 wip2.8 后回调，接近段仍比 wip2.7 前长）
  * v1.4.0-wip2.8：批注反应窗放宽（回滚 wip2.7 通用预警灯后专治幕5手感）——
@@ -477,7 +482,12 @@ let achToast = null;              // 当前展示的解锁横幅 { id, t }（t �
 let achScroll = 0;                // v1.4.0-wip1.3 功名簿纵向滚动偏移（游戏坐标 px）
 let achScrollMax = 0;             // 本帧绘制的最大可滚动量（内容超出视口时 > 0）
 let achDragPt = null;             // 功名簿拖拽滚动：指针上一帧屏幕坐标 {x,y}，null = 未在拖拽（wip2.2 主轴随朝向）
-function achSave() { store.set(ACH_KEY, JSON.stringify(achUnlocked)); }
+function achSave() {
+  /* wip3.1 性能修复：localStorage 同步写挪出关键帧（setTimeout 0 = 本帧渲染完再落盘）。
+     首次解锁「中国人能飞」恰发生在幕5大跳越飞行奏折的瞬间——原实现同一帧内做
+     序列化+同步I/O+四振荡器音效，移动 WebView 上是一次可感知的顿帧 */
+  setTimeout(function () { store.set(ACH_KEY, JSON.stringify(achUnlocked)); }, 0);
+}
 function unlockAch(id) {
   if (!ACH[id] || achUnlocked[id]) return false;
   achUnlocked[id] = 1;
@@ -625,7 +635,7 @@ function layout() {
   canvas.style.width = cssW + 'px';
   canvas.style.height = cssH + 'px';
   let dpr = window.devicePixelRatio || 1;
-  if (dpr > 3) dpr = 3;                              // 高 DPR 设备性能保护
+  if (dpr > 2) dpr = 2;                              // wip3.1 高DPR性能保护 3→2：像素风 2x 已锐利，3x 手机渲染面积 9x→4x（fillText/measureText 光栅成本降约55%，治幕5大跳卡顿）
   if (cssW * dpr > 3840) dpr = 3840 / cssW;          // 超大屏位图上限（4K）
   if (cssH * dpr > 3840) dpr = Math.min(dpr, 3840 / cssH);
   canvas.width = Math.round(cssW * dpr);
@@ -1853,10 +1863,17 @@ function drawSuo(x, y) {
   ctx.restore();
 }
 function drawZouzhe(x, y, t, o) {
-  /* 幕 5 彩蛋：谏言小字（深色底条 + 加大加亮，保证可读） */
+  /* 幕 5 彩蛋：谏言小字（深色底条 + 加大加亮，保证可读）
+     wip3.1 性能修复：memoW 惰性缓存——原实现每帧对每枚可见奏折做 font切换+measureText，
+     移动 WebView 上文本测量+光栅是帧耗时大头（幕5 全部奏折带 memo，其他幕没有），
+     大跳接近奏折时屏上元素最多 → 卡感最强。宽度量一次存 ob，后续帧直接用 */
   if (o && o.memo) {
+    if (o.memoW == null) {
+      ctx.font = 'bold 10px sans-serif';
+      o.memoW = ctx.measureText(o.memo).width;
+    }
     ctx.font = 'bold 10px sans-serif';
-    const tw = ctx.measureText(o.memo).width;
+    const tw = o.memoW;
     ctx.fillStyle = 'rgba(24,18,30,0.78)';
     ctx.fillRect(x + 12 - tw / 2 - 5, y - 21, tw + 10, 14);
     ctx.fillStyle = '#ffe9a8';
