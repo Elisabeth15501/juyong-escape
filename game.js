@@ -1,7 +1,9 @@
 'use strict';
 /* ============================================================
- * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.0-wip3.4）
+ * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.0-wip3.5）
  * ------------------------------------------------------------
+ * v1.4.0-wip3.5：态1 抖动更正——平滑正弦浮动改为玩家/谷大用同款颠步抖动
+ *     （Math.floor(t*10)%2，10Hz 0/1px 离散交替，杨廷和停留原处）
  * v1.4.0-wip3.4：杨廷和态2/3 换退场立绘——Yangtinghe_leaving.png（14×26 单帧→高58），
  *     态2 移疾拱背静帧 / 态3 拂袖快步走颤动 0→2px（sin t*9，频率高于呼吸）；四态全立绘化
  * v1.4.0-wip3.3：杨廷和态0/1 换正式立绘——Yangtinghe_stand.png（14×26 单帧→高58），
@@ -2245,15 +2247,15 @@ function drawGudayong(x, y, t, c) {
    造型锚点：红袍（首辅服色，比张钦绯袍深两档）· 乌纱帽 + 帽翅 · 白发白须（正德朝 60+ 老臣）· 玉带 */
 function drawYang(x, groundY, t, st, g) {
   const c = g || ctx;                                    // 外部（动作参考页）可传入独立画布上下文
-  /* wip3.3/wip3.4：四态全部用正式立绘（单帧 14×26 → 高58）——
-     态0 候讲静立（stand，无浮动）；态1 开讲持笏（stand，呼吸浮动 0→2px，约1.26s 一循环）；
+  /* wip3.3/wip3.4/wip3.5：四态全部用正式立绘（单帧 14×26 → 高58）——
+     态0 候讲静立（stand，无浮动）；态1 开讲持笏（stand，玩家/谷大用同款颠步抖动 0/1px）；
      态2 移疾拱背（leaving，静帧——拱背已含在素材里）；态3 拂袖快步（leaving，走路颤动 0→2px）。
      代码绘制路径保留为兜底（素材加载失败时） */
   const stand = Sprites.map.yang_stand;
   if (stand && (st === 0 || st === 1)) {
     const dh = 58;
     const dw = stand.width * dh / stand.height;
-    const bob = st === 1 ? (0.5 + 0.5 * Math.sin(t * 5)) * 2 : 0;
+    const bob = st === 1 ? Math.floor(t * 10) % 2 : 0;   // wip3.5 更正：与玩家/谷大用同款颠步抖动（10Hz 0/1px 离散交替，原误用平滑正弦浮动）
     c.drawImage(stand, x + (32 - dw) / 2, groundY - dh - bob, dw, dh);
     return;
   }
