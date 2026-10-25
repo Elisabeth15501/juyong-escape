@@ -1,7 +1,9 @@
 'use strict';
 /* ============================================================
- * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.0-wip3.3）
+ * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.0-wip3.4）
  * ------------------------------------------------------------
+ * v1.4.0-wip3.4：杨廷和态2/3 换退场立绘——Yangtinghe_leaving.png（14×26 单帧→高58），
+ *     态2 移疾拱背静帧 / 态3 拂袖快步走颤动 0→2px（sin t*9，频率高于呼吸）；四态全立绘化
  * v1.4.0-wip3.3：杨廷和态0/1 换正式立绘——Yangtinghe_stand.png（14×26 单帧→高58），
  *     态0 候讲静立 / 态1 开讲呼吸浮动 0→2px（sin t*5）；态2/3 素材未出仍代码绘制
  * v1.4.0-wip3.2：幕5 二次加长——length 6500→7000（用户要求，与幕6 并列最长）
@@ -163,7 +165,7 @@ const AudioSys = {
 };
 
 /* ---------- 精灵表加载（缺失自动回退代码占位绘制） ---------- */
-const SHEET_FRAMES = { zhuhouzhao: 4, zhushou: 4, shiwei: 1, zhangqin: 4, zhangqin_standing: 1, yin: 1, cry: 8, gudayong_standing: 1, gudayong_moving: 4, yang: 4, yang_stand: 1 };
+const SHEET_FRAMES = { zhuhouzhao: 4, zhushou: 4, shiwei: 1, zhangqin: 4, zhangqin_standing: 1, yin: 1, cry: 8, gudayong_standing: 1, gudayong_moving: 4, yang: 4, yang_stand: 1, yang_leaving: 1 };
 const Sprites = {
   map: {},
   load: function () {
@@ -178,7 +180,8 @@ const Sprites = {
       gudayong_standing: 'Gudayong_standing.png',   // 站立态（未被玩家碰触前）
       gudayong_moving: 'Gudayong_moving.png',       // 跟随态（4 帧奔跑循环）
       yang: 'Yangtinghe.png',                        // 杨廷和（4 帧横排：候讲/开讲/移疾/退场，v1.4.0）
-      yang_stand: 'Yangtinghe_stand.png',            // 杨廷和正式立绘（单帧，wip3.3：态0/1 用；态2/3 素材未出仍代码绘制）
+      yang_stand: 'Yangtinghe_stand.png',            // 杨廷和正式立绘（单帧，wip3.3：态0/1 用）
+      yang_leaving: 'Yangtinghe_leaving.png',        // 杨廷和退场立绘（单帧，wip3.4：态2/3 用，拂袖拱背）
       bg_palace: 'scene_palace.png',
       bg_road: 'scene_road.png',
       bg_pass: 'scene_pass.png'
@@ -2242,15 +2245,24 @@ function drawGudayong(x, y, t, c) {
    造型锚点：红袍（首辅服色，比张钦绯袍深两档）· 乌纱帽 + 帽翅 · 白发白须（正德朝 60+ 老臣）· 玉带 */
 function drawYang(x, groundY, t, st, g) {
   const c = g || ctx;                                    // 外部（动作参考页）可传入独立画布上下文
-  /* wip3.3：态0/1 用正式立绘（单帧 Yangtinghe_stand.png 14×26 → 高58）——
-     态0 候讲静立；态1 开讲持笏，身体上下浮动 0→2px（呼吸感，1.26s 一循环）；
-     态2/3（移疾/退场）素材未出，仍走代码绘制 */
+  /* wip3.3/wip3.4：四态全部用正式立绘（单帧 14×26 → 高58）——
+     态0 候讲静立（stand，无浮动）；态1 开讲持笏（stand，呼吸浮动 0→2px，约1.26s 一循环）；
+     态2 移疾拱背（leaving，静帧——拱背已含在素材里）；态3 拂袖快步（leaving，走路颤动 0→2px）。
+     代码绘制路径保留为兜底（素材加载失败时） */
   const stand = Sprites.map.yang_stand;
   if (stand && (st === 0 || st === 1)) {
     const dh = 58;
     const dw = stand.width * dh / stand.height;
     const bob = st === 1 ? (0.5 + 0.5 * Math.sin(t * 5)) * 2 : 0;
     c.drawImage(stand, x + (32 - dw) / 2, groundY - dh - bob, dw, dh);
+    return;
+  }
+  const leaving = Sprites.map.yang_leaving;
+  if (leaving && (st === 2 || st === 3)) {
+    const dh = 58;
+    const dw = leaving.width * dh / leaving.height;
+    const bob = st === 3 ? (0.5 + 0.5 * Math.sin(t * 9)) * 2 : 0;   // 快步走颤动频率高于呼吸（t*9）
+    c.drawImage(leaving, x + (32 - dw) / 2, groundY - dh - bob, dw, dh);
     return;
   }
   const img = Sprites.map.yang;
