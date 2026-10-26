@@ -1,7 +1,11 @@
 'use strict';
 /* ============================================================
- * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.1-wip4.1）
+ * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.1-wip4.2）
  * ------------------------------------------------------------
+ * v1.4.1-wip4.2 热修——wip4.1 提示排版改造把循环变量改名为 hi0 后，
+ *     绘制循环残留裸 hi（'use strict' 下 ReferenceError），开局 hint 首帧炸断
+ *     主循环 → 画面冻结（无限/关卡全模式）。补 var 声明（教训：strict 文件里
+ *     改循环变量必须全文查引用）
  * v1.4.1-wip4.1 移动端性能二轮（无限模式四场景卡顿排查）——①AudioSys 节点池：
  *     ensure 期预建 14 对 osc+gain（事件帧零创建，治将军印/护驾同帧 12 节点风暴），
  *     用后 setTimeout 异步补货；jump 音效 70ms 节流（治频繁连跳）②提示排版缓存
@@ -2845,7 +2849,7 @@ function drawHUD() {
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
     ctx.fillRect((VW - htw) / 2, hby, htw, hbh);
     ctx.fillStyle = '#ffffff';
-    for (hi = 0; hi < hLines.length; hi++) {
+    for (var hi = 0; hi < hLines.length; hi++) {
       ctx.fillText(hLines[hi], VW / 2, hby + 13 + hi * 12);
     }
     ctx.globalAlpha = 1;
