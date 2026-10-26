@@ -1,7 +1,13 @@
 'use strict';
 /* ============================================================
- * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.0）
+ * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.1-wip4.1）
  * ------------------------------------------------------------
+ * v1.4.1-wip4.1 移动端性能二轮（无限模式四场景卡顿排查）——①AudioSys 节点池：
+ *     ensure 期预建 14 对 osc+gain（事件帧零创建，治将军印/护驾同帧 12 节点风暴），
+ *     用后 setTimeout 异步补货；jump 音效 70ms 节流（治频繁连跳）②提示排版缓存
+ *     （hint 显示期每帧 2~3 次 measureText → 每 hint 一次）③天空/万里榜渐变缓存
+ *     （每帧 2 次 createLinearGradient → 换键才重建）④粒子保险帽 150
+ *     （连跳 dust + 事件 burst 累积防护）
  * v1.4.0-wip3.7：万里榜+关注作者（XHS 容器端能力）——结算页万里榜入口+榜单页
  *     （总/月/周/日 tab 默认周、Top100、三态名次条、2002 退避/1005 联动降级、
  *     头像色块兜底）；关注作者（菜单页脚/结算药丸/终章落款，20s 节流、
@@ -130,28 +136,62 @@ const store = {
 /* ---------- Web Audio 运行时合成音效（零音频文件、零体积） ---------- */
 const AudioSys = {
   ctx: null,
+  pool: [],                                          // wip4.1 节点池：预创建的 {o,g} 对（事件期零创建，治节点风暴顿帧）
+  POOL_MAX: 14,
   ensure: function () {
     if (!this.ctx) {
       try { this.ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
     }
     if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
+    this._fill();
+  },
+  /* wip4.1：空闲期补货（setTimeout 0 挪出关键帧）；振荡器一次性，start 后作废，池随用随补 */
+  _fill: function () {
+    if (!this.ctx) return;
+    setTimeout(function () {
+      const A = AudioSys;
+      if (!A.ctx) return;
+      while (A.pool.length < A.POOL_MAX) {
+        try {
+          const o = A.ctx.createOscillator();
+          const g = A.ctx.createGain();
+          o.connect(g); g.connect(A.ctx.destination);
+          A.pool.push({ o: o, g: g });
+        } catch (e) { return; }
+      }
+    }, 0);
   },
   tone: function (freq, dur, type, vol, delay, slideTo) {
     if (!this.ctx) return;
     const t0 = this.ctx.currentTime + (delay || 0);
-    const o = this.ctx.createOscillator();
-    const g = this.ctx.createGain();
+    /* wip4.1：优先取池中预建节点（事件帧零创建）；池空才现场建（低频路径） */
+    let pair = this.pool.pop();
+    if (!pair) {
+      try {
+        const o = this.ctx.createOscillator();
+        const g = this.ctx.createGain();
+        o.connect(g); g.connect(this.ctx.destination);
+        pair = { o: o, g: g };
+      } catch (e) { return; }
+    }
+    const o = pair.o, g = pair.g;
     o.type = type || 'square';
     o.frequency.setValueAtTime(freq, t0);
     if (slideTo) o.frequency.exponentialRampToValueAtTime(Math.max(30, slideTo), t0 + dur);
     g.gain.setValueAtTime(vol || 0.08, t0);
     g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-    o.connect(g);
-    g.connect(this.ctx.destination);
     o.start(t0);
     o.stop(t0 + dur + 0.05);
+    this._fill();
   },
-  jump: function () { this.tone(420, 0.12, 'square', 0.05, 0, 680); },
+  _lastJumpSfx: -1,
+  jump: function () {
+    /* wip4.1 连跳音效节流 70ms：手速连发时节点消耗快于补货，压不住就现场建——节流掉密集重叠音 */
+    const now = this.ctx ? this.ctx.currentTime : -1;
+    if (now - this._lastJumpSfx < 0.07) return;
+    this._lastJumpSfx = now;
+    this.tone(420, 0.12, 'square', 0.05, 0, 680);
+  },
   seal: function () { this.tone(660, 0.09, 'square', 0.07); this.tone(880, 0.1, 'square', 0.07, 0.09); },
   transform: function () {
     this.tone(523, 0.1, 'square', 0.08);
@@ -479,6 +519,7 @@ let platTaught = false;                 // 高台首见教学（每会话一次�
 let yang = null;                        // v1.4.0 杨廷和（幕5 讲席段）：{ x, state, st, t, lectureT, cursor, leaveT }
 let projectiles = [];                   // v1.4.0-wip2 批注弹幕：{ kind, x, y, w, h, warn, t }（梁储 moshu 复用此数组）
 let hintText = '';
+let hintCache = { key: '', lines: [], w: 0 };   // wip4.1 提示排版缓存（内容+视口宽 → 折行/宽度，免每帧 measureText）
 let hintStory = false;   // v1.0.3 提示双通道：剧情播报（true）不受提示开关屏蔽，教学提示（false）受 hintsOn 控制
 let endlessBest = parseInt(store.get('ming_escape_best') || '0', 10) || 0;
 let companion = null, companionSpawnAt = -1, companionUsed = false;
@@ -1887,12 +1928,18 @@ function die() {
 }
 
 /* ---------- 粒子 ---------- */
+/* wip4.1 粒子保险帽：连跳 dust + 事件 burst 累积时砍最旧的（上限 150，防低端机渲染堆积） */
+function particleCap() {
+  if (particles.length > 150) particles.splice(0, particles.length - 150);
+}
 function dust(x, y, n) {
+  particleCap();
   for (let i = 0; i < n; i++) {
     particles.push({ x: x, y: y - 2, vx: -40 - Math.random() * 60, vy: -20 - Math.random() * 40, life: 0.3 + Math.random() * 0.2, max: 0.5, color: '#9a8a72', size: 1 + Math.random() * 2 });
   }
 }
 function burst(x, y, n, color) {
+  particleCap();
   for (let i = 0; i < n; i++) {
     particles.push({ x: x, y: y, vx: (Math.random() * 2 - 1) * 180, vy: -Math.random() * 220 - 40, life: 0.5 + Math.random() * 0.4, max: 0.9, color: color, size: 1 + Math.random() * 3 });
   }
@@ -1918,11 +1965,17 @@ function drawParticles() {
 }
 
 /* ---------- 背景（三套场景，视差滚动，y 全部锚定地面线 G） ---------- */
+let skyGradCache = { key: '', g: null };            // wip4.1 天空渐变缓存（每帧 createLinearGradient → 换色才重建）
+let lbGradCache = { key: '', g: null };             // wip4.1 万里榜渐隐渐变缓存
 function drawSky(sky) {
-  const g = ctx.createLinearGradient(0, 0, 0, G);
-  g.addColorStop(0, sky[0]);
-  g.addColorStop(1, sky[1]);
-  ctx.fillStyle = g;
+  const key = sky[0] + '|' + sky[1] + '|' + G;
+  if (skyGradCache.key !== key) {
+    const g = ctx.createLinearGradient(0, 0, 0, G);
+    g.addColorStop(0, sky[0]);
+    g.addColorStop(1, sky[1]);
+    skyGradCache = { key: key, g: g };
+  }
+  ctx.fillStyle = skyGradCache.g;
   ctx.fillRect(0, 0, VW, G);
 }
 function drawGround(lv) {
@@ -2762,24 +2815,31 @@ function drawHUD() {
     ctx.globalAlpha = Math.min(1, hintT);
     ctx.font = '9px sans-serif';
     ctx.textAlign = 'center';
-    /* 竖屏逻辑宽仅 270px：超宽播报自动折两行（优先就近标点/空格断行），底条随之加高（wip21） */
-    var hLines = [hintText];
-    if (ctx.measureText(hintText).width > VW - 16) {
-      var hMid = Math.ceil(hintText.length / 2), hCut = -1, hd;
-      var hPunc = '，。！？：；、·…—　 ';
-      for (hd = 0; hd < hMid && hCut < 0; hd++) {
-        if (hPunc.indexOf(hintText.charAt(hMid - 1 - hd)) >= 0) hCut = hMid - hd;
-        else if (hPunc.indexOf(hintText.charAt(hMid + hd)) >= 0) hCut = hMid + hd + 1;
+    /* 竖屏逻辑宽仅 270px：超宽播报自动折两行（优先就近标点/空格断行），底条随之加高（wip21）
+       wip4.1 性能修复：排版结果按 hint 内容+视口宽缓存——原实现 hint 显示的 2.5~3s 内
+       每帧做 2~3 次 measureText（WebView 文本测量是帧耗时大头），拾印/护驾提示正踩此路径 */
+    var hCacheKey = hintText + '|' + VW;
+    if (hintCache.key !== hCacheKey) {
+      var hLines = [hintText];
+      if (ctx.measureText(hintText).width > VW - 16) {
+        var hMid = Math.ceil(hintText.length / 2), hCut = -1, hd;
+        var hPunc = '，。！？：；、·…—　 ';
+        for (hd = 0; hd < hMid && hCut < 0; hd++) {
+          if (hPunc.indexOf(hintText.charAt(hMid - 1 - hd)) >= 0) hCut = hMid - hd;
+          else if (hPunc.indexOf(hintText.charAt(hMid + hd)) >= 0) hCut = hMid + hd + 1;
+        }
+        if (hCut < 0) hCut = hMid;
+        hLines = [hintText.slice(0, hCut), hintText.slice(hCut)];
       }
-      if (hCut < 0) hCut = hMid;
-      hLines = [hintText.slice(0, hCut), hintText.slice(hCut)];
+      var hW = 0;
+      for (var hi0 = 0; hi0 < hLines.length; hi0++) {
+        var hw0 = ctx.measureText(hLines[hi0]).width;
+        if (hw0 > hW) hW = hw0;
+      }
+      hintCache = { key: hCacheKey, lines: hLines, w: hW };
     }
-    var hW = 0;
-    for (var hi = 0; hi < hLines.length; hi++) {
-      var hw = ctx.measureText(hLines[hi]).width;
-      if (hw > hW) hW = hw;
-    }
-    var htw = Math.min(VW - 10, Math.ceil(hW) + 20);
+    var hLines = hintCache.lines;
+    var htw = Math.min(VW - 10, Math.ceil(hintCache.w) + 20);
     var hbh = hLines.length > 1 ? 32 : 20;
     var hby = VH - 14 - hbh;
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
@@ -2959,10 +3019,14 @@ function drawRankBoard() {
   }
   ctx.restore();
 
-  /* 渐隐 + 提示 */
-  const grd = ctx.createLinearGradient(0, viewBottom - 26, 0, viewBottom);
-  grd.addColorStop(0, 'rgba(21,26,44,0)'); grd.addColorStop(1, 'rgba(21,26,44,1)');
-  ctx.fillStyle = grd; ctx.fillRect(0, viewBottom - 26, 0, 26);
+  /* 渐隐 + 提示（wip4.1：渐变按 viewBottom 缓存，榜单页每帧不再重建） */
+  const grdKey = 'lb' + viewBottom;
+  if (lbGradCache.key !== grdKey) {
+    const grd = ctx.createLinearGradient(0, viewBottom - 26, 0, viewBottom);
+    grd.addColorStop(0, 'rgba(21,26,44,0)'); grd.addColorStop(1, 'rgba(21,26,44,1)');
+    lbGradCache = { key: grdKey, g: grd };
+  }
+  ctx.fillStyle = lbGradCache.g; ctx.fillRect(0, viewBottom - 26, 0, 26);
   ctx.fillStyle = '#6a6680'; ctx.font = '8px sans-serif'; ctx.textAlign = 'center';
   if (portrait) {
     ctx.fillText('▼ 前 100 名 · 滚动查看', VW / 2, 420);
