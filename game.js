@@ -1,7 +1,11 @@
 'use strict';
 /* ============================================================
- * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.0-wip3.5）
+ * 《朱厚照出居庸关》 像素跑酷 · juyong_escape（v1.4.0-wip3.6）
  * ------------------------------------------------------------
+ * v1.4.0-wip3.6：加载门修复——Pages 上素材加载期间长时间呈现代码占位背景：
+ *     新增 boot 状态（纯代码加载页+进度条），素材全部就绪（onerror 也计数防挂死）
+ *     或 8s 超时兜底才放行进主菜单；img.decode() 预热防首绘卡帧；
+ *     boot 期间点击/按键屏蔽；占位绘制路径保留为素材缺失兜底
  * v1.4.0-wip3.5：态1 抖动更正——平滑正弦浮动改为玩家/谷大用同款颠步抖动
  *     （Math.floor(t*10)%2，10Hz 0/1px 离散交替，杨廷和停留原处）
  * v1.4.0-wip3.4：杨廷和态2/3 换退场立绘——Yangtinghe_leaving.png（14×26 单帧→高58），
@@ -170,6 +174,7 @@ const AudioSys = {
 const SHEET_FRAMES = { zhuhouzhao: 4, zhushou: 4, shiwei: 1, zhangqin: 4, zhangqin_standing: 1, yin: 1, cry: 8, gudayong_standing: 1, gudayong_moving: 4, yang: 4, yang_stand: 1, yang_leaving: 1 };
 const Sprites = {
   map: {},
+  total: 0, loaded: 0, ready: false,                 // wip3.6 加载进度：boot 门放行依据
   load: function () {
     const files = {
       zhuhouzhao: 'Zhuhouzhao.png',
@@ -189,13 +194,26 @@ const Sprites = {
       bg_pass: 'scene_pass.png'
     };
     const keys = Object.keys(files);
+    this.total = keys.length;
     for (let i = 0; i < keys.length; i++) {
       (function (k) {
         const img = new Image();
-        img.onload = function () { Sprites.map[k] = img; };
-        img.onerror = function () { /* 缺失则用代码占位绘制 */ };
+        img.onload = function () {
+          Sprites.map[k] = img;
+          if (img.decode) img.decode();              // wip3.6：预热解码，避免首绘 drawImage 卡帧
+          Sprites.done();
+        };
+        img.onerror = function () { Sprites.done(); };   // 缺失同样计数放行（占位绘制兜底），不挂死加载门
         img.src = files[k];
       })(keys[i]);
+    }
+  },
+  /* wip3.6：每张图就绪/失败都计数；全部完成 = ready，boot 门放行进主菜单 */
+  done: function () {
+    this.loaded++;
+    if (this.loaded >= this.total && !this.ready) {
+      this.ready = true;
+      if (state === 'boot') state = 'menu';
     }
   }
 };
@@ -434,7 +452,7 @@ function qjCalibrate(o) {
 }
 
 /* ---------- 运行时状态 ---------- */
-let state = 'menu';            // menu / story / play / clear / finale / gameover
+let state = 'boot';            // boot=素材加载页（wip3.6，就绪/超时后转 menu）/ menu / story / play / clear / finale / gameover
 let paused = false;            // 游戏内暂停（仅 play 态有效；暂停时逻辑冻结、渲染暂停菜单）
 let mode = 'level';            // level / endless
 let levelIndex = 0;
@@ -844,6 +862,7 @@ function toggleHints() {   // v1.0.3 游戏提示开关：教学底条 + HUD 提
 }
 
 function handleTap(lx, ly) {
+  if (state === 'boot') return;                          // wip3.6 加载门：素材就绪前屏蔽点击
   /* 按钮优先（含游戏内右上角暂停键与暂停菜单按钮），再落到跳跃 */
   for (let i = 0; i < uiButtons.length; i++) {
     const b = uiButtons[i];
@@ -859,6 +878,7 @@ function handleTap(lx, ly) {
 }
 
 function confirmAction() {
+  if (state === 'boot') return;                          // wip3.6 加载门：素材就绪前屏蔽按键确认
   if (state === 'story') {
     if (storyPage === 0) storyPage = 1; else state = 'play';
   }
@@ -2695,6 +2715,26 @@ function drawFinale() {
     button(VW / 2 + 10, yBtn, 110, 26, '返回主页', toMenu, true);
   }
 }
+/* wip3.6 加载页（纯代码绘制，不依赖任何素材——占位即本页）：进度条走完才放行进主菜单 */
+function drawBoot() {
+  ctx.fillStyle = '#141822';
+  ctx.fillRect(0, 0, VW, VH);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffd76a';
+  ctx.font = 'bold 26px sans-serif';
+  ctx.fillText('朱厚照出居庸关', VW / 2, VH / 2 - 26);
+  ctx.fillStyle = '#b8b4c8';
+  ctx.font = '10px sans-serif';
+  ctx.fillText('加载素材…', VW / 2, VH / 2 + 2);
+  const pct = Sprites.total ? Sprites.loaded / Sprites.total : 0;
+  const bw = 140, bx = VW / 2 - bw / 2, by = VH / 2 + 16;
+  ctx.fillStyle = '#2a2f3e';
+  ctx.fillRect(bx, by, bw, 8);
+  ctx.fillStyle = '#ffd76a';
+  ctx.fillRect(bx, by, Math.round(bw * pct), 8);
+  ctx.fillStyle = '#6b6472';
+  ctx.fillText(Sprites.loaded + ' / ' + Sprites.total, VW / 2, by + 24);
+}
 function drawMenu() {
   drawBackground(MENU_BG);
   ctx.fillStyle = 'rgba(8,10,18,0.35)';
@@ -2859,6 +2899,7 @@ function render() {
   uiButtons.length = 0;
   ctx.setTransform(PIXEL_SCALE, 0, 0, PIXEL_SCALE, 0, 0);
   ctx.imageSmoothingEnabled = false;
+  if (state === 'boot') { drawBoot(); return; }   // wip3.6 加载门：素材就绪前只呈现纯代码加载页
   if (state === 'menu') {
     if (menuPage === 'levels') drawLevelSelect();
     else if (menuPage === 'ach') drawAchPage();
@@ -3069,4 +3110,11 @@ function frame(now) {
 /* ---------- 启动 ---------- */
 Sprites.load();
 resetRun();
+/* wip3.6 超时兜底：个别素材挂起时不无限等加载页（8s 强制放行，晚到的图随 onload 自行补位，缺失者走占位绘制） */
+setTimeout(function () {
+  if (!Sprites.ready) {
+    Sprites.ready = true;
+    if (state === 'boot') state = 'menu';
+  }
+}, 8000);
 requestAnimationFrame(frame);
