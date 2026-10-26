@@ -750,6 +750,254 @@ function startLevel(i) {
   state = 'story';
 }
 
+/* ---------- v1.4.0-wip4 小红书端能力：万里榜 + 关注作者 ----------
+   依据《小工具云存储&排行榜 JS API 接入说明》与《小工具 JS API》§3.15：
+   - 能力探测：无 isSupport，一律方法存在性判断；容器外 window.xhs 为 undefined → 全部降级隐藏
+   - 客户端门槛 9.51+：buildVersion ≥ 9510（末 3 位为编译序号，忽略；取不到版本号时以方法存在为准）
+   - 万里榜：submitScore 只留最好成绩（低分提交无害）；getRankList 前百 + getMyRank 三态
+     错误码：2002 榜单未就绪（退避 500/1/2/4s，绝不渲染成空榜）｜1005/10003 未授权（隐藏入口）
+     1004 分数越界（计分已钳制，静默）｜2008/2999 提交场景不重试，无感降级
+   - 关注作者：followAuthor / getFollowStatus；follow_status -1 失败 / 0 未关注 / 1 已关注 / 2 本人
+     频控：确认框每账号每工具每自然日最多 10 次（15404 达上限提示；20002 关闭 / 10003 进行中静默）
+   - 合规红线：只用平台返回的昵称头像，不自行采集或存储用户小红书资料 */
+const XHS = {
+  hasRank: false,
+  hasFollow: false,
+  mt: function () { return (window.xhs && window.xhs.miniTool) ? window.xhs.miniTool : null; }
+};
+function xhsDetect() {
+  const m = XHS.mt();
+  if (!m) { XHS.hasRank = false; XHS.hasFollow = false; return; }
+  let ok = true;
+  const bv = (typeof window.xhs.buildVersion === 'number') ? window.xhs.buildVersion
+           : (typeof window.xhs.getBuildVersion === 'function' ? window.xhs.getBuildVersion() : 0);
+  if (bv && bv < 9510) ok = false;
+  XHS.hasRank = ok && typeof m.submitScore === 'function' && typeof m.getRankList === 'function' && typeof m.getMyRank === 'function';
+  XHS.hasFollow = ok && typeof m.followAuthor === 'function' && typeof m.getFollowStatus === 'function';
+}
+
+/* ----- 关注作者 ----- */
+const FOLLOW = { status: 0, pending: false, lastQ: 0 };
+function refreshFollow(force) {
+  const m = XHS.mt();
+  if (!XHS.hasFollow || FOLLOW.pending) return;
+  const now = Date.now();
+  if (!force && now - FOLLOW.lastQ < 20000) return;    // 节流：状态查询不追帧
+  FOLLOW.lastQ = now;
+  FOLLOW.pending = true;
+  m.getFollowStatus().then(function (r) {
+    FOLLOW.pending = false;
+    const s = r && r.follow_status;
+    if (s === 0 || s === 1 || s === 2) FOLLOW.status = s;   // -1 失败：沿用上次缓存（失败不缓存）
+  }).catch(function () { FOLLOW.pending = false; });
+}
+function onFollowTap() {
+  const m = XHS.mt();
+  if (!XHS.hasFollow || FOLLOW.pending) return;
+  if (FOLLOW.status === 1 || FOLLOW.status === 2) return;
+  FOLLOW.pending = true;
+  m.followAuthor().then(function (r) {
+    FOLLOW.pending = false;
+    const s = r && r.follow_status;
+    if (s === 1 || s === 2) { FOLLOW.status = s; }
+    else if (s === -1) miniToast('关注暂未成功，请稍后再试');
+  }).catch(function (e) {
+    FOLLOW.pending = false;
+    const c = e && e.errCode;
+    if (c === 15404) miniToast('今日关注引导已达上限，明天再来');
+    /* 20002 用户关闭确认框 / 10003 流程进行中：静默 */
+  });
+}
+/* 关注入口绘制：status 0 = 金色药丸（呼吸）｜1 = 灰字收起｜2 = 不渲染（调用方过滤） */
+function drawFollowPill(x, y, w, h, withCtxText) {
+  if (FOLLOW.status === 1) {
+    ctx.fillStyle = '#6a6680'; ctx.font = '9px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('已关注 ♥', x + w / 2, y + h / 2 + 3);
+    return;
+  }
+  ctx.save();
+  ctx.globalAlpha = 0.72 + 0.28 * Math.sin(gt * 2.4);
+  ctx.fillStyle = 'rgba(255,215,106,0.08)'; ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = 'rgba(255,215,106,0.35)'; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+  ctx.fillStyle = '#ffd76a'; ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText(withCtxText ? '♥ 关注作者 · 游戏更新第一时间知道' : '♥ 关注作者', x + w / 2, y + h / 2 + 3);
+  ctx.restore();
+  uiButtons.push({ x: x, y: y, w: w, h: h, cb: onFollowTap });
+}
+/* 主菜单关注入口：竖屏 = 页脚药丸 y424；横屏 = 页脚右落款（与点按行同基线，设计稿 v3.2） */
+function drawFollowMenu() {
+  if (!XHS.hasFollow || FOLLOW.status === 2) return;
+  refreshFollow(false);
+  if (portrait) {
+    if (FOLLOW.status === 0) drawFollowPill(VW / 2 - 60, 424, 120, 18, false);
+    else { ctx.fillStyle = '#6a6680'; ctx.font = '9px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('已关注 ♥', VW / 2, 437); }
+  } else {
+    ctx.font = '9px sans-serif'; ctx.textAlign = 'right';
+    if (FOLLOW.status === 0) {
+      ctx.save(); ctx.globalAlpha = 0.72 + 0.28 * Math.sin(gt * 2.4);
+      ctx.fillStyle = '#ffd76a'; ctx.fillText('♥ 关注作者', VW - 10, 267); ctx.restore();
+      uiButtons.push({ x: VW - 72, y: 256, w: 62, h: 18, cb: onFollowTap });
+    } else { ctx.fillStyle = '#6a6680'; ctx.fillText('已关注 ♥', VW - 10, 267); }
+  }
+}
+/* 终章落款行：实录引文与按钮行之间（设计稿 v3.2） */
+function drawFollowSeal() {
+  if (!XHS.hasFollow || FOLLOW.status === 2) return;
+  refreshFollow(false);
+  const y = portrait ? 390 : 194;                 // 文字基线
+  ctx.font = '9px sans-serif'; ctx.textAlign = 'center';
+  if (FOLLOW.status === 1) {
+    ctx.fillStyle = '#6a6680'; ctx.font = '9px sans-serif'; ctx.fillText('已关注 ♥', VW / 2, y);
+    return;
+  }
+  ctx.save(); ctx.globalAlpha = 0.72 + 0.28 * Math.sin(gt * 2.4);
+  ctx.fillStyle = '#ffd76a'; ctx.fillText('♥ 关注作者 · 出关故事，未完待续', VW / 2, y);
+  ctx.restore();
+  uiButtons.push({ x: VW / 2 - 90, y: y - 12, w: 180, h: 18, cb: onFollowTap });
+}
+
+/* ----- 端能力 toast（区别于成就横幅） ----- */
+let miniToastData = null;          // { text, t }
+function miniToast(text) { miniToastData = { text: text, t: 2.4 }; }
+function drawMiniToast() {
+  if (!miniToastData) return;
+  const a = Math.min(1, miniToastData.t / 0.4);
+  ctx.save(); ctx.globalAlpha = a;
+  ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
+  const w = ctx.measureText(miniToastData.text).width + 28;
+  const y = portrait ? VH - 96 : VH - 60;
+  ctx.fillStyle = 'rgba(10,10,18,0.88)'; ctx.fillRect(VW / 2 - w / 2, y, w, 26);
+  ctx.strokeStyle = 'rgba(255,215,106,0.5)'; ctx.lineWidth = 1; ctx.strokeRect(VW / 2 - w / 2 + 0.5, y + 0.5, w - 1, 25);
+  ctx.fillStyle = '#ffd76a'; ctx.fillText(miniToastData.text, VW / 2, y + 17);
+  ctx.restore();
+}
+
+/* ----- 万里榜 ----- */
+const RANK = {
+  from: 'menu', tab: 'week', status: 'idle',   // idle / loading / ok / error
+  list: [], mine: null, errMsg: '',
+  scroll: 0, scrollMax: 0, dragPt: null,
+  reqId: 0, backoffN: 0, pending: false
+};
+const RANK_PERIODS = [
+  { key: 'all', label: '总' }, { key: 'month', label: '月' },
+  { key: 'week', label: '周' }, { key: 'day', label: '日' }
+];
+function rankPeriodLabel(key) {
+  for (let i = 0; i < RANK_PERIODS.length; i++) if (RANK_PERIODS[i].key === key) return RANK_PERIODS[i].label;
+  return '周';
+}
+function openRank(from) {
+  RANK.from = from; RANK.scroll = 0;
+  state = 'rank';
+  loadRank(true);
+}
+function closeRank() { state = RANK.from; }
+function rankSetTab(key) {
+  if (RANK.tab === key) return;
+  RANK.tab = key; RANK.scroll = 0;
+  loadRank(true);
+}
+function rankSubmit(li) {
+  const m = XHS.mt();
+  if (!XHS.hasRank || !m || RANK.pending) return;
+  const score = Math.max(0, Math.min(99999, Math.floor(li)));   // [PLACEHOLDER] 上限依平台榜单配置区间校准
+  RANK.pending = true;
+  m.submitScore({ board: 1, score: score }).then(function (r) {
+    RANK.pending = false;
+    if (r && typeof r.score === 'number' && r.score > 0) miniToast('万里榜 · 历代最佳 ' + r.score + ' 里');
+  }).catch(function (e) {
+    RANK.pending = false;
+    const c = e && e.errCode;
+    if (c === 1005 || c === 10003) XHS.hasRank = false;   // 未授权 / 白名单拒绝：全部入口消失
+  });
+}
+function loadRank(force) {
+  const m = XHS.mt();
+  if (!XHS.hasRank || !m) { RANK.status = 'error'; RANK.errMsg = '功能未开通'; return; }
+  if (RANK.status === 'loading' && !force) return;
+  const req = ++RANK.reqId;
+  RANK.status = 'loading'; RANK.backoffN = 0; RANK.mine = null;
+  function fetchList() {
+    m.getRankList({ board: 1, period: RANK.tab }).then(function (res) {
+      if (req !== RANK.reqId) return;                       // 过期请求（已切 tab）丢弃
+      RANK.list = (res && res.data) || [];
+      RANK.status = 'ok';
+      fetchMine();
+    }).catch(function (e) {
+      if (req !== RANK.reqId) return;
+      const c = e && e.errCode;
+      if (c === 1005 || c === 10003) { XHS.hasRank = false; RANK.status = 'error'; RANK.errMsg = '功能未开通'; return; }
+      if (c === 2002 && RANK.backoffN < 4) {                // 榜单未就绪：500ms/1s/2s/4s 退避
+        RANK.backoffN++;
+        setTimeout(function () { if (req === RANK.reqId) fetchList(); }, 500 * Math.pow(2, RANK.backoffN - 1));
+        return;
+      }
+      RANK.status = 'error';
+      RANK.errMsg = c === 2002 ? '榜单暂未就绪，稍后再来' : '榜单加载失败，请稍后再试';
+    });
+  }
+  function fetchMine() {
+    m.getMyRank({ board: 1, period: RANK.tab }).then(function (r) {
+      if (req !== RANK.reqId) return;
+      RANK.mine = r || { status: 'NO_SCORE' };
+    }).catch(function () { if (req === RANK.reqId) RANK.mine = { status: 'NO_SCORE' }; });
+  }
+  fetchList();
+}
+/* 平台头像异步加载：就绪前用首字色块兜底，下一帧自动替换；null/失败 → 色块 */
+const AV_CACHE = {};
+function drawAvatar(url, name, cx, cy, r, seed) {
+  let img = null;
+  if (url) {
+    let c = AV_CACHE[url];
+    if (!c) {
+      c = { img: null, ready: false, failed: false };
+      AV_CACHE[url] = c;
+      const im = new Image();
+      im.onload = function () { c.img = im; c.ready = true; };
+      im.onerror = function () { c.failed = true; };
+      im.src = url;
+    }
+    if (c.ready) img = c.img;
+  }
+  const pal = ['#4a4660', '#5a4a3a', '#3a4a5a', '#544058'];
+  ctx.save();
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.clip();
+  if (img) {
+    const s = Math.min(img.width, img.height);
+    ctx.drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, cx - r, cy - r, r * 2, r * 2);
+  } else {
+    ctx.fillStyle = pal[seed % pal.length];
+    ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+    ctx.fillStyle = '#d8d4e4'; ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText((name || '无').charAt(0), cx, cy + 3);
+  }
+  ctx.restore();
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+}
+/* 结算页两个入口（仅无限模式；rank 降级时关注药丸回退 y288/y198——设计稿 v3.2 联动规则） */
+function drawGameoverXhsEntries() {
+  const rankOK = XHS.hasRank;
+  if (rankOK) {
+    ctx.fillStyle = 'rgba(20,24,34,0.85)'; ctx.fillRect(VW / 2 - 90, portrait ? 288 : 194, 180, portrait ? 24 : 22);
+    ctx.strokeStyle = '#ffd76a'; ctx.lineWidth = 1;
+    ctx.strokeRect(VW / 2 - 89.5, (portrait ? 288 : 194) + 0.5, 179, (portrait ? 24 : 22) - 1);
+    ctx.fillStyle = '#ffd76a'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('万里榜 · 谁跑得更远 ▸', VW / 2, (portrait ? 288 : 194) + (portrait ? 16 : 15));
+    uiButtons.push({ x: VW / 2 - 90, y: portrait ? 288 : 194, w: 180, h: portrait ? 24 : 22, cb: function () { openRank('gameover'); } });
+  }
+  if (XHS.hasFollow) {
+    refreshFollow(false);
+    if (FOLLOW.status !== 2) {
+      const fy = portrait ? (rankOK ? 326 : 288) : (rankOK ? 230 : 198);
+      if (FOLLOW.status === 0) drawFollowPill(VW / 2 - 95, fy, 190, 18, true);
+      else { ctx.fillStyle = '#6a6680'; ctx.font = '9px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('已关注 ♥', VW / 2, fy + 13); }
+    }
+  }
+}
+
 function startEndless() {
   mode = 'endless';
   assist = false;
@@ -801,22 +1049,40 @@ canvas.addEventListener('pointerdown', function (e) {
   const lx = (e.clientX - r.left) / r.width * VW;
   const ly = (e.clientY - r.top) / r.height * VH;
   if (state === 'menu' && menuPage === 'ach') achDragPt = { x: e.clientX, y: e.clientY };   // 功名簿：记录拖拽起点（松手清除）
+  if (state === 'rank') RANK.dragPt = { x: e.clientX, y: e.clientY };   // 万里榜：拖拽滚动起点
   handleTap(lx, ly);
 });
 canvas.addEventListener('pointerup', function (e) {
   e.preventDefault();
   achDragPt = null;
+  RANK.dragPt = null;
   releaseJump();
 });
 /* v1.4.0-wip2.2 功名簿滚动三通道：滚轮（桌面）/ 指针拖拽（触屏+鼠标共用）/ 方向键
    主轴随朝向：竖屏上下滚、横屏左右滚（滚轮 deltaX 优先——Shift+滚轮/触控板横扫） */
 canvas.addEventListener('wheel', function (e) {
+  if (state === 'rank') {   // v1.4.0-wip4 万里榜滚动
+    e.preventDefault();
+    const d = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+    RANK.scroll += d > 0 ? 40 : -40;
+    if (RANK.scroll < 0) RANK.scroll = 0;
+    if (RANK.scroll > RANK.scrollMax) RANK.scroll = RANK.scrollMax;
+    return;
+  }
   if (state !== 'menu' || menuPage !== 'ach') return;
   e.preventDefault();
   const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
   achScroll += d > 0 ? 40 : -40;
 }, { passive: false });
 canvas.addEventListener('pointermove', function (e) {
+  if (RANK.dragPt) {   // v1.4.0-wip4 万里榜拖拽滚动（纵向，两朝向一致）
+    const r = canvas.getBoundingClientRect();
+    RANK.scroll += (RANK.dragPt.y - e.clientY) * (VH / r.height);
+    if (RANK.scroll < 0) RANK.scroll = 0;
+    if (RANK.scroll > RANK.scrollMax) RANK.scroll = RANK.scrollMax;
+    RANK.dragPt = { x: e.clientX, y: e.clientY };
+    return;
+  }
   if (!achDragPt) return;
   const r = canvas.getBoundingClientRect();
   if (portrait) achScroll += (achDragPt.y - e.clientY) * (VH / r.height);   // 屏幕像素差换算到游戏坐标
@@ -827,6 +1093,7 @@ canvas.addEventListener('pointermove', function (e) {
 window.addEventListener('keydown', function (e) {
   if (e.code === 'KeyP' || e.code === 'Escape') {
     e.preventDefault();
+    if (e.code === 'Escape' && state === 'rank') { closeRank(); return; }   // 万里榜：Esc 返回
     togglePause();
     return;
   }
@@ -836,6 +1103,15 @@ window.addEventListener('keydown', function (e) {
     if (e.code === 'ArrowUp' || e.code === 'PageUp') { e.preventDefault(); achScroll -= e.code === 'PageUp' ? 120 : 36; return; }
     if (e.code === 'ArrowRight') { e.preventDefault(); achScroll += 36; return; }
     if (e.code === 'ArrowLeft') { e.preventDefault(); achScroll -= 36; return; }
+  }
+  /* 万里榜页：方向键 / PgUp·PgDn 滚动（v1.4.0-wip4） */
+  if (state === 'rank') {
+    if (e.code === 'ArrowDown' || e.code === 'PageDown') { e.preventDefault(); RANK.scroll += e.code === 'PageDown' ? 120 : 36; }
+    else if (e.code === 'ArrowUp' || e.code === 'PageUp') { e.preventDefault(); RANK.scroll -= e.code === 'PageUp' ? 120 : 36; }
+    else return;
+    if (RANK.scroll < 0) RANK.scroll = 0;
+    if (RANK.scroll > RANK.scrollMax) RANK.scroll = RANK.scrollMax;
+    return;
   }
   if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
     e.preventDefault();
@@ -1596,6 +1872,7 @@ function die() {
   if (mode === 'endless') {
     const li = fmtLi(dist);
     if (li > endlessBest) { endlessBest = li; store.set('ming_escape_best', String(li)); }
+    rankSubmit(li);   // v1.4.0-wip4 万里榜：结算提交一次（平台只留最好成绩，低分提交无害）
   }
   /* v1.0.3 幕1辅助计数：卡关玩家累计死亡≥3次后自动放慢节奏 */
   if (mode === 'level' && levelIndex === 0) {
@@ -2591,6 +2868,123 @@ function drawClearOverlay() {
   wrapText(lv.after, VW / 2, portrait ? 150 : 92, VW - 40, 18);
   button(VW / 2 - 70, VH - 64, 140, 26, '下一幕 ▶', nextLevel, true);
 }
+/* ---------- v1.4.0-wip4 万里榜页面（设计稿 v3.2.1 规格） ---------- */
+function drawRankTab(x, y, w, h, label, key) {
+  const on = RANK.tab === key;
+  ctx.fillStyle = on ? '#ffd76a' : 'rgba(20,24,34,0.85)';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = on ? '#ffd76a' : '#8a8fa0'; ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+  ctx.fillStyle = on ? '#1a1408' : '#a8a4bc';
+  ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText(label, x + w / 2, y + h / 2 + 3);
+  uiButtons.push({ x: x, y: y, w: w, h: h, cb: function () { rankSetTab(key); } });
+}
+function drawRankBoard() {
+  ctx.fillStyle = '#151a2c'; ctx.fillRect(0, 0, VW, VH);
+  ctx.fillStyle = 'rgba(8,10,20,0.35)'; ctx.fillRect(0, 0, VW, VH);
+  ctx.textAlign = 'center';
+  const listTop = portrait ? 132 : 88;
+  const rowH = portrait ? 30 : 22;
+  const viewBottom = portrait ? 404 : 222;
+  const viewH = viewBottom - listTop;
+  const myY = portrait ? 444 : 246;
+  const myH = portrait ? 36 : 24;
+
+  button(8, portrait ? 40 : 38, 56, 20, '◀ 返回', closeRank, false);
+
+  /* 标题 + 副题（横版副题独立行，标题-副题-列表三段净距 9px——设计稿 v3.2.1） */
+  ctx.fillStyle = '#ffd76a';
+  if (portrait) {
+    ctx.font = 'bold 16px sans-serif'; ctx.fillText('万里榜', VW / 2, 68);
+    ctx.fillStyle = '#b8b4c8'; ctx.font = '9px sans-serif'; ctx.fillText('看看你能让朱厚照走多远', VW / 2, 90);
+  } else {
+    ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText('万里榜', 76, 52);
+    ctx.fillStyle = '#b8b4c8'; ctx.font = '9px sans-serif'; ctx.fillText('看看你能让朱厚照走多远', 76, 70);
+    ctx.textAlign = 'center';
+  }
+
+  /* 周期 tab：总/月/周/日（默认周） */
+  const tw = portrait ? 60 : 54, th = 20;
+  const tx0 = portrait ? 9 : 244, ty = portrait ? 102 : 38;
+  for (let i = 0; i < RANK_PERIODS.length; i++) {
+    const p = RANK_PERIODS[i];
+    drawRankTab(tx0 + i * (tw + 4), ty, tw, th, p.label, p.key);
+  }
+
+  /* 列表区（裁剪 + 滚动） */
+  const n = RANK.list.length;
+  RANK.scrollMax = Math.max(0, n * rowH - viewH);
+  if (RANK.scroll > RANK.scrollMax) RANK.scroll = RANK.scrollMax;
+  if (RANK.scroll < 0) RANK.scroll = 0;
+
+  ctx.save();
+  ctx.beginPath(); ctx.rect(0, listTop, VW, viewH); ctx.clip();
+  if (RANK.status === 'loading') {
+    ctx.fillStyle = '#8a86a0'; ctx.font = '11px sans-serif';
+    ctx.fillText('榜单加载中' + '…'.repeat(1 + Math.floor(gt * 2) % 3), VW / 2, listTop + viewH / 2);
+  } else if (RANK.status === 'error') {
+    ctx.fillStyle = '#e0a0a0'; ctx.font = '11px sans-serif';
+    ctx.fillText(RANK.errMsg || '榜单加载失败', VW / 2, listTop + viewH / 2 - 12);
+    button(VW / 2 - 50, listTop + viewH / 2 + 4, 100, 22, '重试', function () { loadRank(true); }, false);
+  } else if (n === 0) {
+    ctx.fillStyle = '#ffd76a'; ctx.font = 'bold 13px sans-serif';
+    ctx.fillText('虚位以待', VW / 2, listTop + viewH / 2 - 10);
+    ctx.fillStyle = '#8a86a0'; ctx.font = '10px sans-serif';
+    ctx.fillText('本期第一个出关的就是你', VW / 2, listTop + viewH / 2 + 12);
+  } else {
+    for (let i = 0; i < n; i++) {
+      const it = RANK.list[i];
+      const y = listTop + i * rowH - RANK.scroll;
+      if (y + rowH < listTop || y > viewBottom) continue;
+      const mineHere = RANK.mine && typeof RANK.mine.rank === 'number' && RANK.mine.rank === it.rank;
+      if (mineHere) { ctx.fillStyle = 'rgba(255,215,106,0.07)'; ctx.fillRect(0, y, VW, rowH); }
+      const rk = (typeof it.rank === 'number') ? it.rank : (i + 1);
+      const rkColor = rk === 1 ? '#ffd76a' : rk === 2 ? '#c8ccd8' : rk === 3 ? '#d8a06a' : '#8a86a0';
+      ctx.fillStyle = rkColor; ctx.font = 'bold ' + (portrait ? 11 : 10) + 'px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(String(rk), portrait ? 23 : 22, y + rowH / 2 + 4);
+      const noName = (it.nickname == null || it.nickname === '');
+      drawAvatar(it.avatar || null, it.nickname, portrait ? 46 : 50, y + rowH / 2, portrait ? 10 : 9, i);
+      ctx.fillStyle = noName ? '#8a86a0' : '#e8e4d8';
+      ctx.font = (portrait ? 10 : 9) + 'px sans-serif'; ctx.textAlign = 'left';
+      ctx.fillText(noName ? '无名' : it.nickname, portrait ? 62 : 66, y + rowH / 2 + 4);
+      ctx.fillStyle = '#ffd76a'; ctx.font = 'bold ' + (portrait ? 11 : 10) + 'px sans-serif'; ctx.textAlign = 'right';
+      ctx.fillText((typeof it.score === 'number' ? it.score : 0) + ' 里', VW - 12, y + rowH / 2 + 4);
+    }
+  }
+  ctx.restore();
+
+  /* 渐隐 + 提示 */
+  const grd = ctx.createLinearGradient(0, viewBottom - 26, 0, viewBottom);
+  grd.addColorStop(0, 'rgba(21,26,44,0)'); grd.addColorStop(1, 'rgba(21,26,44,1)');
+  ctx.fillStyle = grd; ctx.fillRect(0, viewBottom - 26, 0, 26);
+  ctx.fillStyle = '#6a6680'; ctx.font = '8px sans-serif'; ctx.textAlign = 'center';
+  if (portrait) {
+    ctx.fillText('▼ 前 100 名 · 滚动查看', VW / 2, 420);
+    ctx.fillText('新一期不沿用上期成绩 · 周榜每周一 0 点重置（北京时间）', VW / 2, 434);
+  } else {
+    ctx.fillText('▼ 前 100 名 · 新一期不沿用上期成绩 · 周榜每周一 0 点重置', VW / 2, 236);
+  }
+
+  /* 我的名次条：EXACT 精确 / OVER_LIMIT 10000+ / NO_SCORE 引导（NO_SCORE 是成功状态不是错误） */
+  ctx.fillStyle = 'rgba(10,8,16,0.92)'; ctx.fillRect(0, myY, VW, myH);
+  ctx.strokeStyle = 'rgba(255,215,106,0.4)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, myY + 0.5); ctx.lineTo(VW, myY + 0.5); ctx.stroke();
+  ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
+  const mine = RANK.mine, pl = rankPeriodLabel(RANK.tab);
+  let mineText = '…', mineLead = false;
+  if (RANK.status === 'ok' && mine) {
+    if (mine.status === 'EXACT') mineText = '我 · 第 ' + mine.rank + ' 名 · ' + (typeof mine.score === 'number' ? mine.score : 0) + ' 里（' + pl + '榜）';
+    else if (mine.status === 'OVER_LIMIT') mineText = '我 · 10000+' + (typeof mine.score === 'number' ? ' · ' + mine.score + ' 里' : '') + '（' + pl + '榜）';
+    else if (mine.status === 'NO_SCORE') { mineText = '本期尚无成绩——去跑一里'; mineLead = true; }
+    else mineText = '…';
+  }
+  ctx.fillStyle = mineLead ? '#e8e4d8' : '#ffd76a';
+  ctx.fillText(mineText, VW / 2, myY + myH / 2 + 4);
+  drawMiniToast();
+}
+
 function drawGameOverOverlay() {
   ctx.fillStyle = 'rgba(30,8,8,0.6)';
   ctx.fillRect(0, 0, VW, VH);
@@ -2616,6 +3010,8 @@ function drawGameOverOverlay() {
   }
   button(VW / 2 - 120, yBtn, 110, 26, mode === 'level' ? '重试本幕' : '再来一次', retry, true);
   button(VW / 2 + 10, yBtn, 110, 26, '回到主页', toMenu, false);
+  if (mode === 'endless') drawGameoverXhsEntries();   // v1.4.0-wip4 万里榜 + 关注（仅无限模式）
+  drawMiniToast();
 }
 function drawCryingZhangqin(x, y) {
   const img = Sprites.map.cry;
@@ -2709,6 +3105,7 @@ function drawFinale() {
     ctx.textAlign = 'center';
     ctx.fillText('「是役也，斩虏首十六级。」——《明武宗实录》', VW / 2, portrait ? 364 : 170);
   }
+  if (finaleT > 11) drawFollowSeal();   // v1.4.0-wip4 关注落款（引文与按钮行之间）
   if (finaleT > 9) {
     const yBtn = portrait ? VH - 70 : VH - 52;
     button(VW / 2 - 120, yBtn, 110, 26, '再看一遍演出', function () { startLevel(levelIndex); }, false);
@@ -2759,6 +3156,8 @@ function drawMenu() {
   ctx.fillText('史料：《明史 · 张钦传》《明史 · 武宗本纪》《明武宗实录》', VW / 2, portrait ? 384 : 252);
   ctx.fillStyle = '#6a6680';
   ctx.fillText('点按或空格跳跃 · 拾取大将军印可变身朱寿', VW / 2, portrait ? 404 : 264);
+  drawFollowMenu();   // v1.4.0-wip4 关注作者（仅容器内渲染；设计稿 v3.2）
+  drawMiniToast();
 }
 
 /* v1.0.0 选关页：通关一幕解锁下一幕（unlockedActs 持久化于 localStorage） */
@@ -2906,6 +3305,7 @@ function render() {
     else drawMenu();
     return;
   }
+  if (state === 'rank') { drawRankBoard(); return; }   // v1.4.0-wip4 万里榜页面
   const bg = mode === 'level' ? LEVELS[levelIndex] : ENDLESS;
   ctx.save();
   if (shakeT > 0) ctx.translate(Math.floor(Math.random() * 8 - 4), Math.floor(Math.random() * 8 - 4));
@@ -3102,6 +3502,7 @@ function frame(now) {
   }
   updateParticles(dt);
   if (achToast) { achToast.t -= dt; if (achToast.t <= 0) achToast = null; }   // v1.4.0 成就横幅计时
+  if (miniToastData) { miniToastData.t -= dt; if (miniToastData.t <= 0) miniToastData = null; }   // v1.4.0-wip4 端能力 toast 计时
   if (shakeT > 0) shakeT -= dt;
   render();
   requestAnimationFrame(frame);
@@ -3110,6 +3511,8 @@ function frame(now) {
 /* ---------- 启动 ---------- */
 Sprites.load();
 resetRun();
+xhsDetect();          // v1.4.0-wip4 小红书端能力探测（容器外 / 旧客户端 = 全部降级隐藏）
+refreshFollow(true);  // 关注状态首查
 /* wip3.6 超时兜底：个别素材挂起时不无限等加载页（8s 强制放行，晚到的图随 onload 自行补位，缺失者走占位绘制） */
 setTimeout(function () {
   if (!Sprites.ready) {
